@@ -21,14 +21,18 @@ export interface EngineInput {
   is_mobile?: boolean;
   load_receptor_type?: string;
   support_count?: number;
+  zero_configuration?: 'NON_AUTOMATIC' | 'SEMI_AUTOMATIC' | 'AUTOMATIC' | 'ZERO_TRACKING';
 }
 
 export interface MpeEvaluationResult {
   mpeRule: MpeRule | null;
   mpeValue: number | null; // physical unit value (e.g. in kg/g)
   mpeInE: number | null; // e.g. 0.5, 1.0, 1.5, 2.0, 3.0
+  mpeRuleId: string | null;
   clause: string | null;
   stage: InspectionType;
+  status: 'SUCCESS' | 'PENDING';
+  reason?: string;
 }
 
 export interface AuditDetails {
@@ -50,8 +54,33 @@ export interface AuditDetails {
   eccentric_positions?: Record<string, number>;
   checklist?: Record<string, boolean>;
   reason?: string;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  formula?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
+}
+
+export interface ComplianceResult {
+  testCode: string;
+  testDefinitionId: string;
+  applicability: ApplicabilityType;
+  status: TestResult;
+  calculation?: {
+    method?: string;
+    inputs?: Record<string, unknown>;
+    outputs?: Record<string, unknown>;
+    formula?: string;
+  };
+  calculatedError: number | null;
+  absoluteError: number | null;
+  mpe: number | null;
+  mpeRuleId: string | null;
+  reason?: string;
+  ruleSetId: string;
+  ruleVersion: string;
+  auditDetails: AuditDetails;
+  remarks: string;
 }
 
 export interface TestCalculationResult {
@@ -64,6 +93,7 @@ export interface TestCalculationResult {
   method: string;
   auditDetails: AuditDetails;
   remarks: string;
+  reason?: string;
 }
 
 export interface TestPlanItem {
@@ -79,4 +109,3 @@ export interface InspectionPlan {
   instrument: EngineInput;
   testItems: TestPlanItem[];
 }
-

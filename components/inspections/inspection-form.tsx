@@ -65,6 +65,7 @@ export default function InspectionForm({
 
   // T02 Zero-Setting State
   const [t02Method, setT02Method] = useState<'DIRECT' | 'CHANGEOVER'>('CHANGEOVER');
+  const [zeroConfig, setZeroConfig] = useState<'NON_AUTOMATIC' | 'SEMI_AUTOMATIC' | 'AUTOMATIC' | 'ZERO_TRACKING'>('NON_AUTOMATIC');
   const t02ZeroLoad = 0;
   const [t02Indication, setT02Indication] = useState<number>(0);
   const [t02DeltaL, setT02DeltaL] = useState<number>(0.5 * (instrument.verification_interval_e || 1));
@@ -124,8 +125,9 @@ export default function InspectionForm({
       actual_interval_d: instrument.actual_interval_d || 1,
       unit: instrument.unit || 'kg',
       has_tare: hasTare,
+      zero_configuration: zeroConfig,
     }),
-    [instrument, hasTare]
+    [instrument, hasTare, zeroConfig]
   );
 
   // Async rule set loader inside useEffect without synchronous setState
@@ -180,6 +182,7 @@ export default function InspectionForm({
       t02Indication,
       t02DeltaL,
       engineInput.verification_interval_e,
+      zeroConfig,
       t02Remarks
     );
     const resT03 = calculateT03(
@@ -187,6 +190,7 @@ export default function InspectionForm({
       t03Load,
       t03Observed,
       t03DeltaL,
+      selectedRuleSetId,
       engineInput,
       mpeRules,
       controlStage,
@@ -195,6 +199,7 @@ export default function InspectionForm({
     const resT04 = calculateT04(
       t04Load,
       t04Readings,
+      selectedRuleSetId,
       engineInput,
       mpeRules,
       controlStage,
@@ -203,6 +208,7 @@ export default function InspectionForm({
     const resT05 = calculateT05(
       t05Load,
       t05Positions,
+      selectedRuleSetId,
       engineInput,
       mpeRules,
       controlStage,
@@ -213,6 +219,7 @@ export default function InspectionForm({
           t06TareLoad,
           t06GrossLoad,
           t06NetObserved,
+          selectedRuleSetId,
           engineInput,
           mpeRules,
           controlStage,
@@ -265,6 +272,8 @@ export default function InspectionForm({
     t06GrossLoad,
     t06NetObserved,
     t06Remarks,
+    zeroConfig,
+    selectedRuleSetId,
   ]);
 
   // Overall Calculated Preliminary Result
@@ -864,6 +873,26 @@ export default function InspectionForm({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+              <div className="space-y-1">
+                <label className="block font-medium text-zinc-600 dark:text-zinc-400">
+                  Zero Setting Device Mode
+                </label>
+                <select
+                  value={zeroConfig}
+                  onChange={(e) =>
+                    setZeroConfig(
+                      e.target.value as 'NON_AUTOMATIC' | 'SEMI_AUTOMATIC' | 'AUTOMATIC' | 'ZERO_TRACKING'
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 font-semibold"
+                >
+                  <option value="NON_AUTOMATIC">Non-automatic Zero Setting</option>
+                  <option value="SEMI_AUTOMATIC">Semi-automatic Zero Setting</option>
+                  <option value="AUTOMATIC">Automatic Zero Setting (Requires DB Procedure)</option>
+                  <option value="ZERO_TRACKING">Zero Tracking (Requires DB Procedure)</option>
+                </select>
+              </div>
+
               <div className="space-y-1">
                 <label className="block font-medium text-zinc-600 dark:text-zinc-400">
                   Zero Evaluation Method
