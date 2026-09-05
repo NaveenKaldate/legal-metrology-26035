@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const TestResultSchema = z.enum(['PASS', 'FAIL', 'NOT_APPLICABLE']);
+export const TestResultSchema = z.enum(['PASS', 'FAIL', 'NOT_APPLICABLE', 'PENDING']);
 
 export const InspectionTypeSchema = z.enum(['TYPE_EVALUATION', 'INITIAL', 'IN_SERVICE']);
 

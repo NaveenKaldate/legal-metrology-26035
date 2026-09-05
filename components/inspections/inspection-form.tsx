@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Instrument, Profile, RuleSet, InspectionType, InspectionDataSource, TestResult } from '@/types/database';
@@ -65,7 +65,7 @@ export default function InspectionForm({
 
   // T02 Zero-Setting State
   const [t02Method, setT02Method] = useState<'DIRECT' | 'CHANGEOVER'>('CHANGEOVER');
-  const [t02ZeroLoad, setT02ZeroLoad] = useState<number>(0);
+  const t02ZeroLoad = 0;
   const [t02Indication, setT02Indication] = useState<number>(0);
   const [t02DeltaL, setT02DeltaL] = useState<number>(0.5 * (instrument.verification_interval_e || 1));
   const [t02Remarks, setT02Remarks] = useState<string>('Zero setting error evaluated.');
@@ -128,26 +128,38 @@ export default function InspectionForm({
     [instrument, hasTare]
   );
 
-  // Load Rule Set details when selectedRuleSetId changes
-  const loadRuleSetData = useCallback(async () => {
-    if (!selectedRuleSetId) return;
-    setLoadingRules(true);
-    setServerError(null);
-    try {
-      const supabase = createClient();
-      const loaded = await fetchLoadedRuleSet(supabase, selectedRuleSetId);
-      setLoadedRuleSet(loaded);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to load rule set';
-      setServerError(msg);
-    } finally {
-      setLoadingRules(false);
-    }
-  }, [selectedRuleSetId]);
-
+  // Async rule set loader inside useEffect without synchronous setState
   useEffect(() => {
-    loadRuleSetData();
-  }, [loadRuleSetData]);
+    let isSubscribed = true;
+
+    async function loadRules() {
+      if (!selectedRuleSetId) return;
+      setLoadingRules(true);
+      setServerError(null);
+      try {
+        const supabase = createClient();
+        const loaded = await fetchLoadedRuleSet(supabase, selectedRuleSetId);
+        if (isSubscribed) {
+          setLoadedRuleSet(loaded);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to load rule set';
+        if (isSubscribed) {
+          setServerError(msg);
+        }
+      } finally {
+        if (isSubscribed) {
+          setLoadingRules(false);
+        }
+      }
+    }
+
+    loadRules();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [selectedRuleSetId]);
 
   // Generate Test Plan
   const testPlan: InspectionPlan | null = useMemo(() => {
@@ -290,8 +302,8 @@ export default function InspectionForm({
       }
 
       // 1. Insert into public.inspections
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: inspectionData, error: inspectionError } = await (
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         supabase.from('inspections') as any
       )
         .insert({
@@ -366,8 +378,10 @@ export default function InspectionForm({
         };
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: testsError } = await (supabase.from('inspection_tests') as any).insert(
+      const { error: testsError } = await (
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        supabase.from('inspection_tests') as any
+      ).insert(
         testsToInsert.map((t) => ({
           inspection_id: inspectionId,
           ...t,
@@ -687,7 +701,7 @@ export default function InspectionForm({
           {testPlan ? (
             <div className="space-y-4">
               <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border rounded-xl overflow-hidden text-xs">
-                {testPlan.testItems.map((item, idx) => (
+                {testPlan.testItems.map((item) => (
                   <div
                     key={item.testDefinition.id}
                     className="p-4 bg-zinc-50/50 dark:bg-zinc-800/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
