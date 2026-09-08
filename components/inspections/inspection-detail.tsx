@@ -103,14 +103,22 @@ export default function InspectionDetail({
         >
           ← Back to Inspections History
         </Link>
-        {inspection.instrument?.id && (
+        <div className="flex items-center gap-4">
           <Link
-            href={`/dashboard/instruments/${inspection.instrument.id}`}
-            className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            href={`/dashboard/reports/${inspection.id}`}
+            className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md transition-colors shadow-sm flex items-center gap-2"
           >
-            View Instrument Details →
+            Generate Test Report
           </Link>
-        )}
+          {inspection.instrument?.id && (
+            <Link
+              href={`/dashboard/instruments/${inspection.instrument.id}`}
+              className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              View Instrument Details →
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Rule Framework Banner */}

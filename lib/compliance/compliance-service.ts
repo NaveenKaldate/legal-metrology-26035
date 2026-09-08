@@ -350,3 +350,4 @@ export async function saveInspectionRecord(
     throw new Error(`Failed to insert inspection tests: ${testsErr.message}`);
   }
 }
+

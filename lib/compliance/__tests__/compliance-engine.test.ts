@@ -209,6 +209,68 @@ runTest('Overall result calculation: all required tests PASS -> PASS', () => {
   assert.strictEqual(overall, 'PASS');
 });
 
+// TEST 9: Empty ruleSetId -> clear error "No rule set selected."
+runTest('fetchLoadedRuleSet with empty ruleSetId -> clear error message', async () => {
+  const dummySupabase = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+  };
+  try {
+    const { fetchLoadedRuleSet } = await import('../rule-engine');
+    await fetchLoadedRuleSet(dummySupabase, '');
+    assert.fail('Should have thrown an error');
+  } catch (err: unknown) {
+    assert(err instanceof Error);
+    assert.strictEqual(
+      err.message,
+      'No rule set selected. Please return to Step 1 and select an active rule set.'
+    );
+  }
+});
+
+// TEST 10: Non-existent ruleSetId -> "Selected rule set could not be found." NOT "Cannot coerce"
+runTest('fetchLoadedRuleSet with non-existent UUID -> "Selected rule set could not be found."', async () => {
+  const dummySupabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: null, error: null }),
+          in: () => async () => ({ data: [], error: null }),
+        }),
+      }),
+    }),
+  };
+  try {
+    const { fetchLoadedRuleSet } = await import('../rule-engine');
+    await fetchLoadedRuleSet(dummySupabase, '99999999-9999-9999-9999-999999999999');
+    assert.fail('Should have thrown an error');
+  } catch (err: unknown) {
+    assert(err instanceof Error);
+    assert.strictEqual(err.message, 'Selected rule set could not be found.');
+  }
+});
+
+// TEST 11: Valid OIML R-76 rule set ID -> loads OIML R-76 standard & 6 test definitions
+runTest('fetchLoadedRuleSet with OIML R-76 ID -> loads standard OIML R-76', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockQuery: any = {
+    maybeSingle: async () => ({ data: null, error: null }),
+    eq: () => mockQuery,
+    order: async () => ({ data: [], error: null }),
+    in: () => async () => ({ data: [], error: null }),
+  };
+  const dummySupabase = {
+    from: () => ({
+      select: () => mockQuery,
+    }),
+  };
+  const { fetchLoadedRuleSet } = await import('../rule-engine');
+  const loaded = await fetchLoadedRuleSet(dummySupabase, '22222222-2222-2222-2222-222222222222');
+  assert.strictEqual(loaded.ruleSet.standard, 'OIML R-76');
+  assert.strictEqual(loaded.ruleSet.version, '2006');
+  assert.strictEqual(loaded.testDefinitions.length, 6);
+  assert.strictEqual(loaded.mpeRules.length, 6);
+});
+
 console.log(`\n====================================================`);
 console.log(`SUMMARY: ${passedCount} / ${totalCount} TESTS PASSED`);
 console.log(`====================================================`);

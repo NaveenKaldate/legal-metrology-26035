@@ -34,9 +34,13 @@ export default function InspectionForm({
   const [currentStep, setCurrentStep] = useState<number>(1);
 
   // Selected Rule Set & Stage
-  const [selectedRuleSetId, setSelectedRuleSetId] = useState<string>(
-    ruleSets[0]?.id || ''
+  const [selectedRuleSet, setSelectedRuleSet] = useState<{ id: string; standard: string; version: string } | null>(
+    ruleSets.length > 0 ? { id: ruleSets[0].id, standard: ruleSets[0].standard, version: ruleSets[0].version } : null
   );
+  
+  // Backward compatibility getter
+  const selectedRuleSetId = selectedRuleSet?.id || '';
+
   const [controlStage, setControlStage] = useState<InspectionType>('INITIAL');
   const [dataSource, setDataSource] = useState<InspectionDataSource>('SIMULATED');
   const [inspectionDate, setInspectionDate] = useState<string>(
@@ -135,7 +139,13 @@ export default function InspectionForm({
     let isSubscribed = true;
 
     async function loadRules() {
-      if (!selectedRuleSetId) return;
+      if (!selectedRuleSetId) {
+        if (isSubscribed) {
+          setServerError('No rule set selected. Please return to Step 1 and select an active rule set.');
+          setLoadedRuleSet(null);
+        }
+        return;
+      }
       setLoadingRules(true);
       setServerError(null);
       try {
@@ -148,6 +158,7 @@ export default function InspectionForm({
         const msg = err instanceof Error ? err.message : 'Failed to load rule set';
         if (isSubscribed) {
           setServerError(msg);
+          setLoadedRuleSet(null);
         }
       } finally {
         if (isSubscribed) {
@@ -310,6 +321,38 @@ export default function InspectionForm({
         return;
       }
 
+      // Verify the UUID is not empty
+      if (!selectedRuleSet || typeof selectedRuleSetId !== 'string') {
+        throw new Error('Invalid OIML rule set ID.');
+      }
+
+      const { data: verifyRuleSet, error: verifyError } = await supabase
+        .from('rule_sets')
+        .select('id, standard, version, jurisdiction, status')
+        .eq('id', selectedRuleSetId)
+        .maybeSingle();
+
+      if (verifyError) {
+        console.error('[RULE SET DEBUG] DB Error verifying rule set:', verifyError);
+        setServerError('Database error while verifying rule set.');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!verifyRuleSet) {
+        console.error('[RULE SET DEBUG] Rule set not found in DB for ID:', selectedRuleSetId);
+        setServerError('Selected rule set was not found.');
+        setSubmitting(false);
+        return;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!(verifyRuleSet as any).id) {
+        setServerError('Selected OIML rule set could not be verified.');
+        setSubmitting(false);
+        return;
+      }
+
       // 1. Insert into public.inspections
       const { data: inspectionData, error: inspectionError } = await (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -318,7 +361,7 @@ export default function InspectionForm({
         .insert({
           instrument_id: instrument.id,
           inspector_id: user.id,
-          rule_set_id: selectedRuleSetId,
+          rule_set_id: selectedRuleSet.id,
           inspection_type: controlStage,
           inspection_date: new Date(inspectionDate).toISOString(),
           rule_version: loadedRuleSet.ruleSet.version,
@@ -484,8 +527,11 @@ export default function InspectionForm({
                 Governing Rule Framework <span className="text-red-500">*</span>
               </label>
               <select
-                value={selectedRuleSetId}
-                onChange={(e) => setSelectedRuleSetId(e.target.value)}
+                value={selectedRuleSet?.id || ''}
+                onChange={(e) => {
+                  const rs = ruleSets.find(r => r.id === e.target.value);
+                  if (rs) setSelectedRuleSet({ id: rs.id, standard: rs.standard, version: rs.version });
+                }}
                 className="w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-sm font-semibold"
               >
                 {ruleSets.map((rs) => (
@@ -703,11 +749,30 @@ export default function InspectionForm({
               <span>📋</span> Step 3: DB-Driven Applicable Test Plan
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Evaluated based on active rule set ({loadedRuleSet?.ruleSet.standard}) and instrument specifications.
+              Evaluated based on active rule set:{' '}
+              <strong className="font-semibold text-zinc-800 dark:text-zinc-200">
+                {loadedRuleSet?.ruleSet
+                  ? `${loadedRuleSet.ruleSet.standard} — ${loadedRuleSet.ruleSet.version}`
+                  : activeRuleSetObj
+                  ? `${activeRuleSetObj.standard} — ${activeRuleSetObj.version}`
+                  : 'None selected'}
+              </strong>
             </p>
           </div>
 
-          {testPlan ? (
+          {!selectedRuleSetId ? (
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-xl text-amber-900 dark:text-amber-200 text-sm space-y-2">
+              <span className="font-bold block">⚠️ No Rule Set Selected</span>
+              <p>No rule set selected. Please return to Step 1 and select an active rule set.</p>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="mt-2 px-3 py-1.5 text-xs font-semibold text-white bg-amber-600 rounded hover:bg-amber-700 transition-colors"
+              >
+                ← Return to Step 1
+              </button>
+            </div>
+          ) : testPlan ? (
             <div className="space-y-4">
               <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border rounded-xl overflow-hidden text-xs">
                 {testPlan.testItems.map((item) => (

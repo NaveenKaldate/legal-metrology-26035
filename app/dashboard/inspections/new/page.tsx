@@ -104,6 +104,9 @@ export default async function NewInspectionPage({
   // Fetch Active Rule Sets from Supabase
   let ruleSets: RuleSet[] = [];
   try {
+    const { data: dbRuleSets, error } = await supabase.from('rule_sets').select('*');
+    console.log('[DEBUG] ALL RULE SETS IN DB:', dbRuleSets);
+    console.log('[DEBUG] DB ERROR:', error);
     ruleSets = await fetchActiveRuleSets(supabase);
   } catch (err) {
     console.error('Error fetching rule sets:', err);
@@ -111,6 +114,7 @@ export default async function NewInspectionPage({
 
   // Fallback Rule Sets if DB table not yet seeded
   if (ruleSets.length === 0) {
+    console.log('--- FALLING BACK TO STATIC RULE SETS ---');
     ruleSets = [
       {
         id: '11111111-1111-1111-1111-111111111111',
