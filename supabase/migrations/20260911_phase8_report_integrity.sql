@@ -93,9 +93,27 @@ ALTER TABLE public.inspections
 -- SECTION 2 - Append-only audit log
 -- -----------------------------------------------------------------------------
 
+-- ON DELETE RESTRICT, not CASCADE.
+--
+-- An audit history that disappears when its subject is deleted is not much of
+-- an audit history. CASCADE would have meant "delete the inspection, lose the
+-- record that it was ever finalized".
+--
+-- This does not block legitimate DRAFT deletion. Only finalize_inspection()
+-- writes to this table, and the only action it writes is FINALIZED - which by
+-- definition leaves the inspection FINAL, and a FINAL inspection cannot be
+-- deleted at all (see the immutability trigger below). So a DRAFT has no audit
+-- rows, and deleting one - including the rollback path a failed save uses -
+-- is unaffected.
+--
+-- IF CREATED/UPDATED auditing is added later, DRAFT rows WILL start carrying
+-- audit entries and RESTRICT will then block their deletion. At that point
+-- either delete the audit rows explicitly in the same transaction, or make
+-- inspection_id nullable with ON DELETE SET NULL so the history survives the
+-- subject. Do not simply revert this to CASCADE.
 CREATE TABLE IF NOT EXISTS public.report_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  inspection_id UUID NOT NULL REFERENCES public.inspections(id) ON DELETE CASCADE,
+  inspection_id UUID NOT NULL REFERENCES public.inspections(id) ON DELETE RESTRICT,
   action TEXT NOT NULL CHECK (
     action IN ('CREATED', 'UPDATED', 'FINALIZED', 'FINALIZATION_REJECTED')
   ),
@@ -103,6 +121,31 @@ CREATE TABLE IF NOT EXISTS public.report_audit_log (
   performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   metadata JSONB
 );
+
+-- Re-point the foreign key if an earlier run of this migration created the
+-- table with ON DELETE CASCADE. Safe and idempotent: it only replaces the
+-- constraint, and touches no rows.
+DO $$
+DECLARE
+  v_constraint TEXT;
+BEGIN
+  SELECT con.conname INTO v_constraint
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'report_audit_log'
+    AND con.contype = 'f'
+    AND con.confdeltype = 'c';   -- 'c' = CASCADE
+
+  IF v_constraint IS NOT NULL THEN
+    EXECUTE format(
+      'ALTER TABLE public.report_audit_log DROP CONSTRAINT %I', v_constraint
+    );
+    ALTER TABLE public.report_audit_log
+      ADD CONSTRAINT report_audit_log_inspection_id_fkey
+      FOREIGN KEY (inspection_id)
+      REFERENCES public.inspections(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_report_audit_inspection
   ON public.report_audit_log (inspection_id, performed_at DESC);
@@ -115,10 +158,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_audit_one_finalized_per_inspection
 
 ALTER TABLE public.report_audit_log ENABLE ROW LEVEL SECURITY;
 
--- Readable by authenticated users, matching the existing inspection read model.
+-- Audit visibility is DERIVED from inspection visibility rather than restated.
+--
+-- Today these are equivalent: the existing policy on inspections is
+-- `USING (true)` for authenticated users, so this grants exactly the same
+-- access as a plain `USING (true)` would - it is not currently narrower.
+--
+-- The reason to write it this way is drift. A subquery inside a policy is
+-- itself subject to the referenced table's row security, so the moment the
+-- inspections policy is tightened (per-inspector, per-office, per-jurisdiction),
+-- the audit log tightens with it automatically and cannot be left behind as the
+-- looser of the two.
 DROP POLICY IF EXISTS "Authenticated users can read report audit log" ON public.report_audit_log;
 CREATE POLICY "Authenticated users can read report audit log"
-  ON public.report_audit_log FOR SELECT TO authenticated USING (true);
+  ON public.report_audit_log FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.inspections i
+      WHERE i.id = report_audit_log.inspection_id
+    )
+  );
 
 -- Deliberately NO insert/update/delete policy. Rows are written only by the
 -- SECURITY DEFINER finalization function below, so the log is append-only for
@@ -451,5 +510,22 @@ AS $$
   );
 $$;
 
+-- Authenticated only. Anonymous callers deliberately have NO access.
+--
+-- verify_report() is the whole of the public surface. This function reports
+-- whether a token is DRAFT / FINAL / NOT_FOUND, which would let an anonymous
+-- caller learn that a draft exists for a given token - a small disclosure, but
+-- one the public has no need for.
+--
+-- Consequence, by design: an anonymous visitor presenting a DRAFT token sees
+-- "Report Not Found" rather than "Report Not Yet Finalized". The page handles
+-- the denied call gracefully (the RPC returns no data, so it falls through to
+-- the not-found result); it does not error, and it leaks nothing. A signed-in
+-- user still gets the precise "not yet finalized" message.
+--
+-- REVOKE FROM PUBLIC does not remove a grant made directly to a role, so anon
+-- is revoked explicitly. That keeps this correct when the migration is
+-- replayed over a database where an earlier run granted it.
 REVOKE ALL ON FUNCTION public.verification_token_state(UUID) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.verification_token_state(UUID) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.verification_token_state(UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.verification_token_state(UUID) TO authenticated;

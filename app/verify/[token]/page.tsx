@@ -124,6 +124,12 @@ export default async function VerifyPage({
   if (!report) {
     // Distinguish "no such token" from "exists but still a draft", without
     // revealing anything about the draft itself.
+    //
+    // verification_token_state is granted to authenticated users only, so for
+    // an anonymous visitor this call returns no data and the page falls
+    // through to "Report Not Found". That is deliberate: the public surface is
+    // verify_report() alone, and draft existence is not disclosed anonymously.
+    // A signed-in user sees the precise "not yet finalized" message.
     const { data: state } = await supabase.rpc('verification_token_state', {
       p_token: token,
     });
