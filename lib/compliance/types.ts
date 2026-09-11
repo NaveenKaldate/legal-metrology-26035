@@ -6,6 +6,26 @@ import {
   InspectionType,
   TestResult,
 } from '@/types/database';
+import type { Decimal } from './decimal';
+
+/**
+ * Machine-readable reason a calculation could not produce a verdict.
+ * The UI maps these to actionable messages; the text in `reason` is the
+ * human-facing fallback.
+ */
+export type PendingReasonCode =
+  | 'MISSING_RULE_SET'
+  | 'MISSING_ACCURACY_CLASS'
+  | 'INVALID_E'
+  | 'MISSING_TEST_LOAD'
+  | 'MISSING_OBSERVED_VALUE'
+  | 'NO_RULES_FOR_STAGE'
+  | 'NO_APPLICABLE_RULE'
+  | 'AMBIGUOUS_RULES'
+  | 'LOAD_OUT_OF_RANGE'
+  | 'INSUFFICIENT_READINGS'
+  | 'CHECKLIST_INCOMPLETE'
+  | 'PROCEDURE_NOT_CONFIGURED';
 
 export interface EngineInput {
   instrument_type: 'ELECTRONIC_WEIGHING' | 'PLATFORM_WEIGHING';
@@ -27,12 +47,17 @@ export interface EngineInput {
 export interface MpeEvaluationResult {
   mpeRule: MpeRule | null;
   mpeValue: number | null; // physical unit value (e.g. in kg/g)
+  /** Exact MPE for compliance comparisons. Never compare using mpeValue. */
+  mpeValueDecimal?: Decimal | null;
   mpeInE: number | null; // e.g. 0.5, 1.0, 1.5, 2.0, 3.0
   mpeRuleId: string | null;
   clause: string | null;
   stage: InspectionType;
   status: 'SUCCESS' | 'PENDING';
   reason?: string;
+  reasonCode?: PendingReasonCode;
+  /** Test load expressed in verification intervals, for audit display. */
+  loadInE?: number | null;
 }
 
 export interface AuditDetails {
@@ -77,6 +102,7 @@ export interface ComplianceResult {
   mpe: number | null;
   mpeRuleId: string | null;
   reason?: string;
+  reasonCode?: PendingReasonCode;
   ruleSetId: string;
   ruleVersion: string;
   auditDetails: AuditDetails;
@@ -94,6 +120,7 @@ export interface TestCalculationResult {
   auditDetails: AuditDetails;
   remarks: string;
   reason?: string;
+  reasonCode?: PendingReasonCode;
 }
 
 export interface TestPlanItem {

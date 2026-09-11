@@ -15,6 +15,7 @@ import {
   calculateT04,
   calculateT05,
   calculateT06,
+  calculateOverallResult,
 } from '@/lib/compliance/calculation-engine';
 
 interface InspectionFormProps {
@@ -77,6 +78,8 @@ export default function InspectionForm({
   const [loadingRules, setLoadingRules] = useState<boolean>(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  // Set when the inspector tries to save while some tests are still unresolved.
+  const [pendingConfirmation, setPendingConfirmation] = useState<boolean>(false);
 
   // T01 Checklist State
   const [t01Checklist, setT01Checklist] = useState<Record<string, boolean>>({
@@ -309,26 +312,52 @@ export default function InspectionForm({
     selectedRuleSetId,
   ]);
 
-  // Overall Calculated Preliminary Result
+  // Overall result comes from the compliance engine - never re-implemented here.
+  // Applicability is taken from the generated test plan so NOT_APPLICABLE tests
+  // are excluded exactly the way the engine expects.
   const overallCalculatedResult = useMemo(() => {
-    const results = Object.values(calculatedResults);
-    if (results.length === 0) return 'PENDING';
-    const hasFail = results.some((r) => r.result === 'FAIL');
-    if (hasFail) return 'FAIL';
-    const allPassOrNa = results.every(
-      (r) => r.result === 'PASS' || r.result === 'NOT_APPLICABLE'
+    const applicabilityByCode = new Map(
+      (testPlan?.testItems || []).map((item) => [
+        item.testDefinition.test_code,
+        item.applicability as string,
+      ])
     );
-    if (allPassOrNa) return 'PASS';
-    return 'PENDING';
+
+    return calculateOverallResult(
+      Object.values(calculatedResults).map((r) => ({
+        testCode: r.testCode,
+        applicability: applicabilityByCode.get(r.testCode),
+        result: r.result,
+      }))
+    );
+  }, [calculatedResults, testPlan]);
+
+  // Tests that cannot yet produce a verdict, with the reason the engine gave.
+  const unresolvedTests = useMemo(() => {
+    return Object.values(calculatedResults)
+      .filter((r) => r.result === 'PENDING')
+      .map((r) => ({
+        testCode: r.testCode,
+        reason: r.reason || r.remarks || 'This test could not be calculated.',
+      }));
   }, [calculatedResults]);
 
-  const handleSaveInspection = async () => {
+  const handleSaveInspection = async (options?: { acknowledgePending?: boolean }) => {
     setServerError(null);
+
     if (!loadedRuleSet || !testPlan) {
       setServerError('Rule set details must be loaded before saving.');
       return;
     }
 
+    // Do not let an inspector save an incomplete inspection by accident.
+    // They can still choose to save it deliberately - it is recorded as PENDING.
+    if (unresolvedTests.length > 0 && !options?.acknowledgePending) {
+      setPendingConfirmation(true);
+      return;
+    }
+
+    setPendingConfirmation(false);
     setSubmitting(true);
 
     try {
@@ -480,7 +509,27 @@ export default function InspectionForm({
       );
 
       if (testsError) {
-        setServerError(`Inspection header saved, but test items failed: ${testsError.message}`);
+        // The header is already committed at this point. Leaving it behind would
+        // create an inspection with an overall result and no test rows, so roll
+        // it back rather than leaving a half-saved record in the repository.
+        const { error: rollbackError } = await supabase
+          .from('inspections')
+          .delete()
+          .eq('id', inspectionId);
+
+        const isCheckViolation =
+          testsError.message?.includes('inspection_tests_result_check') ||
+          testsError.code === '23514';
+
+        const detail = isCheckViolation
+          ? 'The database does not yet accept PENDING test results. Apply the migration supabase/migrations/20260911_compliance_hardening.sql, or complete every test before saving.'
+          : testsError.message;
+
+        setServerError(
+          rollbackError
+            ? `Could not save the test results (${detail}). The empty inspection record could not be removed automatically - please delete inspection ${inspectionId} manually.`
+            : `Could not save the test results: ${detail} Nothing was saved.`
+        );
         setSubmitting(false);
         return;
       }
@@ -1619,12 +1668,72 @@ export default function InspectionForm({
           </div>
 
           <div className="p-4 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-xl text-xs text-blue-900 dark:text-blue-200 space-y-2">
-            <span className="font-bold block">Historical Audit Record Ready</span>
+            <span className="font-bold block">Rule version recorded with this inspection</span>
             <p>
-              Saving this record will associate it with rule set version{' '}
-              <strong>{activeRuleSetObj?.version}</strong> ({activeRuleSetObj?.standard}). If future rule amendments occur, this historical record will remain preserved and immutable.
+              This record stores rule set <strong>{activeRuleSetObj?.standard}</strong> version{' '}
+              <strong>{activeRuleSetObj?.version}</strong> together with the MPE value and full
+              calculation inputs used for every test, so the result can be reproduced later even if a
+              newer rule set is activated.
             </p>
           </div>
+
+          {/* Unresolved tests: shown before saving, never silently ignored. */}
+          {unresolvedTests.length > 0 && (
+            <div
+              role="alert"
+              className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-900/60 rounded-xl text-xs text-amber-900 dark:text-amber-200 space-y-2"
+            >
+              <span className="font-bold block">
+                {unresolvedTests.length} test{unresolvedTests.length > 1 ? 's' : ''} cannot be
+                evaluated yet
+              </span>
+              <ul className="list-disc list-inside space-y-1">
+                {unresolvedTests.map((t) => (
+                  <li key={t.testCode}>
+                    <span className="font-mono font-bold">{t.testCode}</span> — {t.reason}
+                  </li>
+                ))}
+              </ul>
+              <p className="pt-1">
+                The overall result will be recorded as <strong>PENDING</strong> until these are
+                resolved.
+              </p>
+            </div>
+          )}
+
+          {pendingConfirmation && (
+            <div
+              role="alert"
+              className="p-4 bg-amber-100 dark:bg-amber-950/60 border-2 border-amber-400 dark:border-amber-700 rounded-xl text-xs text-amber-950 dark:text-amber-100 space-y-3"
+            >
+              <span className="font-bold block text-sm">Save this inspection as PENDING?</span>
+              <p>
+                {unresolvedTests.length} test{unresolvedTests.length > 1 ? 's have' : ' has'} not
+                produced a result. You can save now and complete the inspection later, or go back and
+                finish the outstanding tests first.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => handleSaveInspection({ acknowledgePending: true })}
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  Save as PENDING
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingConfirmation(false);
+                    setCurrentStep(4);
+                  }}
+                  className="px-4 py-2 text-xs font-medium text-amber-900 dark:text-amber-200 bg-white dark:bg-zinc-900 border border-amber-300 dark:border-amber-800 rounded-lg hover:bg-amber-50 transition-colors cursor-pointer"
+                >
+                  Go back and complete the tests
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between pt-4">
             <button
@@ -1637,7 +1746,7 @@ export default function InspectionForm({
             <button
               type="button"
               disabled={submitting}
-              onClick={handleSaveInspection}
+              onClick={() => handleSaveInspection()}
               className="px-6 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
             >
               {submitting ? 'Saving Inspection Record...' : 'Finalize & Save Inspection Record'}
