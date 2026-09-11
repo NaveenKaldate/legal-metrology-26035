@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Instrument, Profile, RuleSet, InspectionType, InspectionDataSource, TestResult } from '@/types/database';
 import { InspectionTestInput } from '@/lib/validations/inspection';
+import { isDisplayable, formatDecimal } from '@/lib/compliance/decimal';
 import { LoadedRuleSet, fetchLoadedRuleSet } from '@/lib/compliance/rule-engine';
 import { generateInspectionPlan } from '@/lib/compliance/test-plan-engine';
 import { EngineInput, InspectionPlan } from '@/lib/compliance/types';
@@ -327,6 +328,26 @@ export default function InspectionForm({
       }))
     );
   }, [calculatedResults, testPlan]);
+
+  // Readings a real indicator could not show, because they are not whole
+  // multiples of the actual scale interval d. Arithmetic only - this asserts
+  // no regulatory requirement, and it never blocks the calculation.
+  const displayStepWarnings = useMemo(() => {
+    const d = instrument.actual_interval_d;
+    if (!d || d <= 0) return [];
+
+    const suspect: { testCode: string; value: number }[] = [];
+    if (!isDisplayable(t03Observed, d)) {
+      suspect.push({ testCode: 'T03', value: t03Observed });
+    }
+    for (const reading of t04Readings) {
+      if (!isDisplayable(reading, d)) suspect.push({ testCode: 'T04', value: reading });
+    }
+    for (const value of Object.values(t05Positions)) {
+      if (!isDisplayable(value, d)) suspect.push({ testCode: 'T05', value });
+    }
+    return suspect;
+  }, [instrument.actual_interval_d, t03Observed, t04Readings, t05Positions]);
 
   // Tests that cannot yet produce a verdict, with the reason the engine gave.
   const unresolvedTests = useMemo(() => {
@@ -1113,6 +1134,35 @@ export default function InspectionForm({
               />
             </div>
           </div>
+
+          {displayStepWarnings.length > 0 && (
+            <div
+              role="status"
+              className="p-4 bg-sky-50 dark:bg-sky-950/40 border border-sky-300 dark:border-sky-900/60 rounded-xl text-xs text-sky-900 dark:text-sky-200 space-y-2"
+            >
+              <span className="font-bold block">
+                Check these readings against the display step (d ={' '}
+                {formatDecimal(instrument.actual_interval_d, 4)} {engineInput.unit})
+              </span>
+              <p>
+                An indicator can only show whole multiples of d, so a real instrument could not
+                display{' '}
+                {displayStepWarnings
+                  .map((w) => `${formatDecimal(w.value, 4)} (${w.testCode})`)
+                  .join(', ')}
+                .
+              </p>
+              <p>
+                Either record a value the instrument can actually show, or use the{' '}
+                <strong>changeover-point method</strong> (set the T03 method to Changeover Point),
+                which derives the indication before rounding from a small additional load ΔL.
+              </p>
+              <p className="text-[11px] opacity-80">
+                This is an arithmetic check on d only. It does not change any result — the
+                calculation below still runs exactly as configured.
+              </p>
+            </div>
+          )}
 
           {/* T03: Errors of Indication Test */}
           <div className="bg-white dark:bg-zinc-900 p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 space-y-4">

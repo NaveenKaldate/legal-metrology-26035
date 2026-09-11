@@ -13,7 +13,7 @@ import {
   calculateT06,
   calculateOverallResult,
 } from '../calculation-engine';
-import { D, withinLimit, loadInE } from '../decimal';
+import { D, withinLimit, loadInE, isDisplayable } from '../decimal';
 
 /**
  * Engine tests for SIH 26035.
@@ -448,4 +448,33 @@ test('overall: everything NOT_APPLICABLE -> PENDING (nothing demonstrated)', () 
 
 test('overall: no tests at all -> PENDING', () => {
   assert.equal(calculateOverallResult([]), 'PENDING');
+});
+
+// ===========================================================================
+// Display step (d): can the indicator actually show this reading?
+// Arithmetic only - asserts no regulatory requirement.
+// ===========================================================================
+test('displayable: with d = 0.01 an indicator cannot show 5.004', () => {
+  assert.equal(isDisplayable(5.004, 0.01), false);
+  assert.equal(isDisplayable(15.008, 0.01), false);
+  assert.equal(isDisplayable(15.012, 0.01), false);
+  assert.equal(isDisplayable(5.0, 0.01), true);
+  assert.equal(isDisplayable(5.01, 0.01), true);
+});
+
+test('displayable: with d = 0.001 those same readings are fine', () => {
+  for (const v of [5.004, 5.007, 5.005, 15.008, 15.012, 15.002, 10.003]) {
+    assert.equal(isDisplayable(v, 0.001), true, `${v} should be displayable at d=0.001`);
+  }
+});
+
+test('displayable: unknown or zero d never warns', () => {
+  assert.equal(isDisplayable(5.004, null), true);
+  assert.equal(isDisplayable(5.004, 0), true);
+});
+
+test('displayable: exact decimal, no float drift', () => {
+  // 0.1 + 0.2 style drift would break a naive % check
+  assert.equal(isDisplayable(0.3, 0.1), true);
+  assert.equal(isDisplayable(29.99, 0.01), true);
 });

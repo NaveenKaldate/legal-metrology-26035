@@ -82,6 +82,24 @@ export function formatDecimal(value: Numeric, decimalPlaces = 4): string {
   return fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
+/**
+ * Can a real instrument actually DISPLAY this value?
+ *
+ * A digital indicator shows multiples of its actual scale interval d, so an
+ * indication that is not a whole multiple of d could never appear on the
+ * display. This is plain arithmetic from the definition of d - it asserts no
+ * regulatory requirement.
+ *
+ * Returns true when the value is displayable (or when d is unknown).
+ */
+export function isDisplayable(value: Numeric, d: Numeric): boolean {
+  if (!isNumeric(value) || !isNumeric(d)) return true;
+  const step = D(d);
+  if (step.lte(0)) return true;
+  // modulo in exact decimal - no float drift
+  return D(value).abs().mod(step).isZero();
+}
+
 /** Signed display with an explicit + for positive errors. */
 export function formatSigned(value: Numeric, decimalPlaces = 4): string {
   if (!isNumeric(value)) return '-';
