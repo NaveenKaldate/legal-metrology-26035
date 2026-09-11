@@ -62,7 +62,7 @@ export default async function InstrumentDetailPage({
       data_source,
       overall_result,
       created_at,
-      inspector:profiles(full_name)
+      inspector:profiles!inspections_inspector_id_fkey(full_name)
     `)
     .eq('instrument_id', id)
     .order('created_at', { ascending: false });

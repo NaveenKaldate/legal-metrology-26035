@@ -36,7 +36,7 @@ export default async function InspectionsPage() {
       *,
       rule_set:rule_sets(*),
       instrument:instruments(instrument_type, manufacturer, model, serial_number),
-      inspector:profiles(full_name)
+      inspector:profiles!inspections_inspector_id_fkey(full_name)
     `)
     .order('created_at', { ascending: false });
 

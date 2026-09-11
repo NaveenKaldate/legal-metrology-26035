@@ -48,7 +48,7 @@ export default async function InspectionDetailPage({
       *,
       rule_set:rule_sets(*),
       instrument:instruments(*),
-      inspector:profiles(full_name)
+      inspector:profiles!inspections_inspector_id_fkey(full_name)
     `)
     .eq('id', id)
     .maybeSingle();

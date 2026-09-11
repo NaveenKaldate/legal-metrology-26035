@@ -11,7 +11,7 @@ export async function getInspectionReportData(inspectionId: string): Promise<Rep
       *,
       rule_set:rule_sets(*),
       instrument:instruments(*),
-      inspector:profiles(*)
+      inspector:profiles!inspections_inspector_id_fkey(*)
     `)
     .eq('id', inspectionId)
     .maybeSingle();
