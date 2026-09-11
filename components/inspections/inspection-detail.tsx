@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { InspectionTest, RuleSet } from '@/types/database';
+import { InspectionTest, ReportAuditEntry, ReportStatus, RuleSet } from '@/types/database';
 
 export interface InspectionDetailRecord {
   id: string;
@@ -14,6 +14,10 @@ export interface InspectionDetailRecord {
   rule_set_id: string | null;
   data_source: string;
   overall_result: string;
+  report_status: ReportStatus;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  verification_token: string | null;
   created_at: string;
   rule_set?: RuleSet | null;
   instrument?: {
@@ -48,12 +52,18 @@ export interface InspectionDetailRecord {
 interface InspectionDetailProps {
   inspection: InspectionDetailRecord;
   successMessage?: string | null;
+  auditEntries?: ReportAuditEntry[];
+  /** Rendered only while the report is a DRAFT. */
+  finalizeSlot?: React.ReactNode;
 }
 
 export default function InspectionDetail({
   inspection,
   successMessage,
+  auditEntries = [],
+  finalizeSlot,
 }: InspectionDetailProps) {
+  const isFinal = inspection.report_status === 'FINAL';
   const [expandedJson, setExpandedJson] = useState<Record<string, boolean>>({});
 
   const toggleJson = (id: string) => {
@@ -95,6 +105,60 @@ export default function InspectionDetail({
         </div>
       )}
 
+      {/* Report lifecycle status */}
+      <div
+        className={`p-5 rounded-xl border-2 ${
+          isFinal
+            ? 'bg-green-50 dark:bg-green-950/30 border-green-400 dark:border-green-800'
+            : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700'
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 block">
+              Report status
+            </span>
+            <span
+              className={`text-xl font-black uppercase tracking-wide ${
+                isFinal
+                  ? 'text-green-800 dark:text-green-300'
+                  : 'text-zinc-700 dark:text-zinc-300'
+              }`}
+            >
+              {inspection.report_status}
+            </span>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-xl">
+              {isFinal
+                ? 'This report has been issued. The inspection and its test results can no longer be edited or deleted, and it can be verified independently.'
+                : 'This report is still a draft. It can be edited, and it cannot be verified independently until it is finalized.'}
+            </p>
+          </div>
+
+          {isFinal && (
+            <dl className="text-xs space-y-1 text-right">
+              {inspection.finalized_at && (
+                <div>
+                  <dt className="inline text-zinc-500 dark:text-zinc-400">Finalized at: </dt>
+                  <dd className="inline font-medium text-zinc-900 dark:text-zinc-100">
+                    {new Date(inspection.finalized_at).toLocaleString()}
+                  </dd>
+                </div>
+              )}
+              {inspection.inspector?.full_name && (
+                <div>
+                  <dt className="inline text-zinc-500 dark:text-zinc-400">Finalized by: </dt>
+                  <dd className="inline font-medium text-zinc-900 dark:text-zinc-100">
+                    {inspection.inspector.full_name}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
+        </div>
+
+        {finalizeSlot && <div className="mt-4">{finalizeSlot}</div>}
+      </div>
+
       {/* Navigation Header */}
       <div className="flex items-center justify-between">
         <Link
@@ -108,8 +172,16 @@ export default function InspectionDetail({
             href={`/dashboard/reports/${inspection.id}`}
             className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md transition-colors shadow-sm flex items-center gap-2"
           >
-            Generate Test Report
+            {isFinal ? 'View Final Report' : 'View Draft Report'}
           </Link>
+          {isFinal && inspection.verification_token && (
+            <Link
+              href={`/verify/${inspection.verification_token}`}
+              className="text-sm font-medium text-green-700 dark:text-green-300 hover:underline"
+            >
+              View Verification →
+            </Link>
+          )}
           {inspection.instrument?.id && (
             <Link
               href={`/dashboard/instruments/${inspection.instrument.id}`}
@@ -317,6 +389,33 @@ export default function InspectionDetail({
           })}
         </div>
       </div>
+
+      {/* Audit trail - append-only, written by the database on finalization */}
+      {auditEntries.length > 0 && (
+        <section className="bg-white dark:bg-zinc-900 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 p-6">
+          <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+            Report audit trail
+          </h3>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-4">
+            Recorded by the database. These entries cannot be edited or deleted.
+          </p>
+          <ol className="space-y-2">
+            {auditEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-1"
+              >
+                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">
+                  {entry.action}
+                </span>
+                <span className="text-zinc-500 dark:text-zinc-400">
+                  {new Date(entry.performed_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
     </div>
   );
 }

@@ -109,6 +109,12 @@ export default function ReportSummary({ data }: { data: ReportData }) {
 
       {/* Footer disclaimer */}
       <footer className="pt-5 mt-6 border-t border-slate-300 text-[11px] text-slate-500 leading-relaxed print:break-inside-avoid">
+        {inspection.report_status !== 'FINAL' && (
+          <p className="mb-1.5">
+            <strong className="text-slate-700">Draft:</strong> this report has not been issued as a
+            final report. It may still change and cannot be independently verified.
+          </p>
+        )}
         <p>
           <strong className="text-slate-700">Prototype notice:</strong> this document was produced by
           a student prototype built for Smart India Hackathon 2026 (problem statement 26035). It is a

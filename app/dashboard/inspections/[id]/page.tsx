@@ -2,7 +2,9 @@ import { redirect, notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import DashboardHeader from '@/components/dashboard/header';
 import InspectionDetail, { InspectionDetailRecord } from '@/components/inspections/inspection-detail';
-import { Profile, InspectionTest } from '@/types/database';
+import { Profile, InspectionTest, ReportAuditEntry, TestResult } from '@/types/database';
+import FinalizeReport from '@/components/inspections/finalize-report';
+import { evaluateFinalizationReadiness } from '@/lib/reports/finalization';
 
 export const metadata = {
   title: 'Inspection Details - Legal Metrology Platform',
@@ -76,6 +78,32 @@ export default async function InspectionDetailPage({
     })[],
   };
 
+  // Audit trail for this report (append-only; readable by authenticated users).
+  const { data: rawAudit } = await supabase
+    .from('report_audit_log')
+    .select('*')
+    .eq('inspection_id', id)
+    .order('performed_at', { ascending: false });
+
+  const auditEntries = (rawAudit || []) as ReportAuditEntry[];
+
+  // UI pre-check only. The database re-checks all of this inside
+  // finalize_inspection() and is the actual authority.
+  const readiness = evaluateFinalizationReadiness(
+    {
+      reportStatus: inspection.report_status === 'FINAL' ? 'FINAL' : 'DRAFT',
+      overallResult: inspection.overall_result as 'PASS' | 'FAIL' | 'PENDING',
+      ruleSetId: inspection.rule_set_id,
+      inspectorId: inspection.inspector_id,
+      tests: (inspection.tests || []).map((t) => ({
+        testType: t.test_type,
+        result: t.result as TestResult,
+        testStatus: t.test_status ?? null,
+      })),
+    },
+    { userId: user.id, role: profile?.role === 'ADMIN' ? 'ADMIN' : 'INSPECTOR' }
+  );
+
   let successToast: string | null = null;
   if (resolvedSearchParams.success === 'created') {
     successToast = 'OIML R-76 inspection record saved successfully!';
@@ -89,6 +117,16 @@ export default async function InspectionDetailPage({
         <InspectionDetail
           inspection={inspection}
           successMessage={successToast}
+          auditEntries={auditEntries}
+          finalizeSlot={
+            inspection.report_status !== 'FINAL' ? (
+              <FinalizeReport
+                inspectionId={inspection.id}
+                canFinalize={readiness.canFinalize}
+                blockers={readiness.blockers}
+              />
+            ) : null
+          }
         />
       </main>
     </div>

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
-import { RuleSet } from '@/types/database';
+import { ReportStatus, RuleSet } from '@/types/database';
 
 export interface InspectionWithDetails {
   id: string;
@@ -14,6 +14,9 @@ export interface InspectionWithDetails {
   rule_set_id: string | null;
   data_source: string;
   overall_result: string;
+  report_status: ReportStatus;
+  finalized_at: string | null;
+  verification_token: string | null;
   created_at: string;
   rule_set?: RuleSet | null;
   instrument?: {
@@ -38,6 +41,7 @@ export default function InspectionList({
   const [selectedType, setSelectedType] = useState<string>('ALL');
   const [selectedResult, setSelectedResult] = useState<string>('ALL');
   const [selectedInstrument, setSelectedInstrument] = useState<string>('ALL');
+  const [selectedReportStatus, setSelectedReportStatus] = useState<string>('ALL');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
 
@@ -67,6 +71,7 @@ export default function InspectionList({
     selectedType !== 'ALL' ||
     selectedResult !== 'ALL' ||
     selectedInstrument !== 'ALL' ||
+    selectedReportStatus !== 'ALL' ||
     dateFrom !== '' ||
     dateTo !== '';
 
@@ -75,6 +80,7 @@ export default function InspectionList({
     setSelectedType('ALL');
     setSelectedResult('ALL');
     setSelectedInstrument('ALL');
+    setSelectedReportStatus('ALL');
     setDateFrom('');
     setDateTo('');
   };
@@ -93,6 +99,11 @@ export default function InspectionList({
 
       // Instrument Filter
       if (selectedInstrument !== 'ALL' && item.instrument_id !== selectedInstrument) {
+        return false;
+      }
+
+      // Report lifecycle filter (DRAFT / FINAL)
+      if (selectedReportStatus !== 'ALL' && item.report_status !== selectedReportStatus) {
         return false;
       }
 
@@ -139,6 +150,7 @@ export default function InspectionList({
     selectedType,
     selectedResult,
     selectedInstrument,
+    selectedReportStatus,
     dateFrom,
     dateTo,
   ]);
@@ -206,7 +218,7 @@ export default function InspectionList({
         </div>
 
         {/* Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div className="space-y-1">
             <label
               htmlFor="filter-stage"
@@ -285,6 +297,25 @@ export default function InspectionList({
 
           <div className="space-y-1">
             <label
+              htmlFor="filter-report-status"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              Report
+            </label>
+            <select
+              id="filter-report-status"
+              value={selectedReportStatus}
+              onChange={(e) => setSelectedReportStatus(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            >
+              <option value="ALL">Draft &amp; final</option>
+              <option value="DRAFT">Draft</option>
+              <option value="FINAL">Final</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label
               htmlFor="filter-result"
               className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
             >
@@ -334,6 +365,7 @@ export default function InspectionList({
                   <th className="px-6 py-3">Stage</th>
                   <th className="px-6 py-3">Inspection Date</th>
                   <th className="px-6 py-3">Inspector</th>
+                  <th className="px-6 py-3">Report</th>
                   <th className="px-6 py-3">Overall Result</th>
                   <th className="px-6 py-3 text-right">Actions</th>
                 </tr>
@@ -379,6 +411,23 @@ export default function InspectionList({
                     </td>
 
                     <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-0.5 text-[11px] font-bold rounded ${
+                          item.report_status === 'FINAL'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                        }`}
+                      >
+                        {item.report_status}
+                      </span>
+                      {item.report_status === 'FINAL' && item.finalized_at && (
+                        <div className="text-[10px] text-zinc-500 mt-0.5">
+                          {new Date(item.finalized_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
                       {getResultBadge(item.overall_result)}
                     </td>
 
@@ -396,6 +445,14 @@ export default function InspectionList({
                         >
                           Report / PDF
                         </Link>
+                        {item.report_status === 'FINAL' && item.verification_token && (
+                          <Link
+                            href={`/verify/${item.verification_token}`}
+                            className="text-xs font-semibold text-green-700 dark:text-green-400 hover:underline"
+                          >
+                            Verify
+                          </Link>
+                        )}
                       </div>
                     </td>
                   </tr>

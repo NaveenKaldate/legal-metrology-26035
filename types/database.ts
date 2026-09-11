@@ -1,3 +1,10 @@
+// NOTE: the row shapes below are `type` aliases, not `interface`s, on purpose.
+// The Supabase client requires each table's Row/Insert/Update to satisfy
+// `Record<string, unknown>`. An interface has no implicit index signature and
+// therefore does NOT satisfy it, which silently collapsed `Schema` to `never`
+// and made every query fall back to `any`. Type aliases do get an implicit
+// index signature, which restores end-to-end typing. Do not convert these back.
+
 export type UserRole = 'ADMIN' | 'INSPECTOR';
 
 export type InstrumentType = 'ELECTRONIC_WEIGHING' | 'PLATFORM_WEIGHING';
@@ -10,20 +17,34 @@ export type InspectionDataSource = 'SIMULATED' | 'FIELD';
 
 export type InspectionOverallResult = 'PASS' | 'FAIL' | 'PENDING';
 
+/**
+ * Report lifecycle, separate from the compliance verdict.
+ * overall_result answers "did the instrument comply".
+ * report_status answers "has this report been issued".
+ * A FAIL report is still issued, so these must never be merged.
+ */
+export type ReportStatus = 'DRAFT' | 'FINAL';
+
+export type ReportAuditAction =
+  | 'CREATED'
+  | 'UPDATED'
+  | 'FINALIZED'
+  | 'FINALIZATION_REJECTED';
+
 export type TestResult = 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'PENDING';
 
 export type RuleSetStatus = 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'ARCHIVED';
 
 export type ApplicabilityType = 'REQUIRED' | 'OPTIONAL' | 'NOT_APPLICABLE' | 'CONDITIONAL';
 
-export interface Profile {
+export type Profile = {
   id: string;
   full_name: string | null;
   role: UserRole;
   created_at: string;
-}
+};
 
-export interface Instrument {
+export type Instrument = {
   id: string;
   instrument_type: InstrumentType;
   manufacturer: string | null;
@@ -37,9 +58,9 @@ export interface Instrument {
   unit: string | null;
   status: InstrumentStatus;
   created_at: string;
-}
+};
 
-export interface RuleSet {
+export type RuleSet = {
   id: string;
   standard: string;
   version: string;
@@ -49,9 +70,9 @@ export interface RuleSet {
   status: RuleSetStatus;
   description: string | null;
   created_at: string;
-}
+};
 
-export interface TestDefinition {
+export type TestDefinition = {
   id: string;
   rule_set_id: string;
   test_code: string;
@@ -62,9 +83,9 @@ export interface TestDefinition {
   sequence: number;
   is_active: boolean;
   created_at: string;
-}
+};
 
-export interface TestApplicabilityRule {
+export type TestApplicabilityRule = {
   id: string;
   test_definition_id: string;
   instrument_type?: string | null;
@@ -77,9 +98,9 @@ export interface TestApplicabilityRule {
   applicability: ApplicabilityType;
   reason?: string | null;
   created_at: string;
-}
+};
 
-export interface MpeRule {
+export type MpeRule = {
   id: string;
   rule_set_id: string;
   accuracy_class: string;
@@ -90,9 +111,9 @@ export interface MpeRule {
   mpe_unit: string;
   clause?: string | null;
   created_at: string;
-}
+};
 
-export interface CalculationRule {
+export type CalculationRule = {
   id: string;
   rule_set_id: string;
   test_definition_id?: string | null;
@@ -100,9 +121,9 @@ export interface CalculationRule {
   formula: string;
   description?: string | null;
   created_at: string;
-}
+};
 
-export interface Inspection {
+export type Inspection = {
   id: string;
   instrument_id: string;
   inspector_id: string;
@@ -112,10 +133,23 @@ export interface Inspection {
   rule_set_id: string | null;
   data_source: InspectionDataSource;
   overall_result: InspectionOverallResult;
+  report_status: ReportStatus;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  verification_token: string | null;
   created_at: string;
-}
+};
 
-export interface InspectionTest {
+export type ReportAuditEntry = {
+  id: string;
+  inspection_id: string;
+  action: ReportAuditAction;
+  performed_by: string | null;
+  performed_at: string;
+  metadata: Record<string, unknown> | null;
+};
+
+export type InspectionTest = {
   id: string;
   inspection_id: string;
   test_definition_id?: string | null;
@@ -136,7 +170,7 @@ export interface InspectionTest {
   result: TestResult;
   remarks: string | null;
   created_at: string;
-}
+};
 
 export type Database = {
   public: {
@@ -185,8 +219,18 @@ export type Database = {
       };
       inspections: {
         Row: Inspection;
-        Insert: { id?: string; instrument_id: string; inspector_id: string; inspection_type: InspectionType; inspection_date?: string; rule_version?: string | null; rule_set_id?: string | null; data_source: InspectionDataSource; overall_result?: InspectionOverallResult; created_at?: string };
+        Insert: { id?: string; instrument_id: string; inspector_id: string; inspection_type: InspectionType; inspection_date?: string; rule_version?: string | null; rule_set_id?: string | null; data_source: InspectionDataSource; overall_result?: InspectionOverallResult; report_status?: ReportStatus; created_at?: string };
         Update: { id?: string; instrument_id?: string; inspector_id?: string; inspection_type?: InspectionType; inspection_date?: string; rule_version?: string | null; rule_set_id?: string | null; data_source?: InspectionDataSource; overall_result?: InspectionOverallResult; created_at?: string };
+        Relationships: [];
+      };
+      report_audit_log: {
+        Row: ReportAuditEntry;
+        Insert: { id?: string; inspection_id: string; action: ReportAuditAction; performed_by?: string | null; performed_at?: string; metadata?: Record<string, unknown> | null };
+        // Append-only: enforced in the database by RLS (no update/delete policy)
+        // and the report_audit_log_no_update trigger. Typed as an empty object
+        // rather than `never` because the Supabase client's schema constraint
+        // requires an object shape here.
+        Update: Record<string, never>;
         Relationships: [];
       };
       inspection_tests: {
@@ -197,7 +241,43 @@ export type Database = {
       };
     };
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Functions: {
+      /** Atomic DRAFT -> FINAL transition. Authorization and completeness are
+       *  re-checked inside the database; see migration 20260911_phase8. */
+      finalize_inspection: {
+        Args: { p_inspection_id: string };
+        Returns: {
+          inspection_id: string;
+          report_status: ReportStatus;
+          finalized_at: string;
+          verification_token: string;
+        }[];
+      };
+      /** Public lookup by verification token. Returns only safe fields, and
+       *  only for FINAL reports. */
+      verify_report: {
+        Args: { p_token: string };
+        Returns: {
+          report_reference: string;
+          report_status: string;
+          overall_result: string;
+          inspection_type: string;
+          inspection_date: string;
+          finalized_at: string | null;
+          instrument_manufacturer: string | null;
+          instrument_model: string | null;
+          instrument_serial: string | null;
+          accuracy_class: string | null;
+          rule_standard: string | null;
+          rule_version: string | null;
+        }[];
+      };
+      /** 'DRAFT' | 'FINAL' | 'NOT_FOUND' - status only, no report content. */
+      verification_token_state: {
+        Args: { p_token: string };
+        Returns: string;
+      };
+    };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
   };
