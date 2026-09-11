@@ -5,19 +5,85 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Instrument, Profile, RuleSet, InspectionType, InspectionDataSource, TestResult } from '@/types/database';
 import { InspectionTestInput } from '@/lib/validations/inspection';
-import { isDisplayable, formatDecimal } from '@/lib/compliance/decimal';
+import { isDisplayable, formatDecimal, formatSigned } from '@/lib/compliance/decimal';
 import { LoadedRuleSet, fetchLoadedRuleSet } from '@/lib/compliance/rule-engine';
 import { generateInspectionPlan } from '@/lib/compliance/test-plan-engine';
 import { EngineInput, InspectionPlan } from '@/lib/compliance/types';
 import {
   calculateT01,
   calculateT02,
-  calculateT03,
+  calculateT03MultiPoint,
   calculateT04,
   calculateT05,
   calculateT06,
   calculateOverallResult,
 } from '@/lib/compliance/calculation-engine';
+
+/** One editable load point in the T03 errors-of-indication series. */
+interface T03PointRow {
+  key: string;
+  label: string;
+  load: number | null;
+  observed: number | null;
+  deltaL: number | null;
+  direction: 'UP' | 'DOWN';
+}
+
+/**
+ * Suggested starting load points for T03.
+ *
+ * These are a convenience only. They are NOT presented as the load set that
+ * OIML R-76 requires - that selection is marked NEEDS VERIFICATION. They are
+ * chosen so the inspector can see the rule engine working: Min, the loads
+ * either side of a band change, roughly half of Max, and Max.
+ *
+ * Any point outside Min..Max is dropped, and the engine independently rejects
+ * out-of-range loads.
+ */
+function buildSuggestedLoadPoints(instrument: Instrument): T03PointRow[] {
+  const e = instrument.verification_interval_e || 0;
+  const max = instrument.max_capacity ?? 0;
+  const min = instrument.min_capacity ?? 0;
+  const halfDeltaL = e ? 0.5 * e : null;
+
+  const round = (value: number) => Number(value.toFixed(6));
+  const candidates: { label: string; load: number }[] = [];
+
+  if (min > 0) candidates.push({ label: 'Min', load: round(min) });
+
+  // Loads either side of the 500e band change, when they fit in the range.
+  if (e > 0) {
+    const bandEdge = round(500 * e);
+    const justAbove = round(501 * e);
+    if (bandEdge > min && bandEdge < max) {
+      candidates.push({ label: '500e (band edge)', load: bandEdge });
+    }
+    if (justAbove > min && justAbove < max) {
+      candidates.push({ label: '501e (next band)', load: justAbove });
+    }
+  }
+
+  if (max > 0) {
+    const half = round(max / 2);
+    if (!candidates.some((c) => c.load === half) && half > min) {
+      candidates.push({ label: 'About half of Max', load: half });
+    }
+    candidates.push({ label: 'Max', load: round(max) });
+  }
+
+  const rows = candidates.length > 0 ? candidates : [{ label: 'Point 1', load: null as never }];
+
+  return rows.map((c, index) => ({
+    key: `p${index}`,
+    label: c.label,
+    load: c.load ?? null,
+    // Observed is intentionally left blank - the inspector must enter what the
+    // instrument actually showed. Pre-filling it would fabricate a reading.
+    observed: null,
+    deltaL: halfDeltaL,
+    direction: 'UP' as const,
+  }));
+}
 
 interface InspectionFormProps {
   instrument: Instrument;
@@ -97,18 +163,45 @@ export default function InspectionForm({
   const [t02DeltaL, setT02DeltaL] = useState<number>(0.5 * (instrument.verification_interval_e || 1));
   const [t02Remarks, setT02Remarks] = useState<string>('Zero setting error evaluated.');
 
-  // T03 Errors of Indication State
+  // T03 Errors of Indication State - multiple load points.
+  //
+  // The starting rows below are SUGGESTIONS the inspector can edit, add to or
+  // delete. They are not asserted to be the load set required by OIML R-76;
+  // the required selection of test loads is marked NEEDS VERIFICATION until
+  // confirmed against the source text. What the engine guarantees is that
+  // whatever loads are entered, each one is judged against the MPE band that
+  // applies to that load.
   const [t03Method, setT03Method] = useState<'DIRECT' | 'CHANGEOVER_POINT'>('CHANGEOVER_POINT');
-  const [t03Load, setT03Load] = useState<number>(
-    instrument.max_capacity ? Number((instrument.max_capacity / 2).toFixed(3)) : 10
+
+  const [t03Points, setT03Points] = useState<T03PointRow[]>(() =>
+    buildSuggestedLoadPoints(instrument)
   );
-  const [t03Observed, setT03Observed] = useState<number>(
-    instrument.max_capacity ? Number((instrument.max_capacity / 2).toFixed(3)) : 10
+
+  const [t03Remarks, setT03Remarks] = useState<string>(
+    'Errors of indication evaluated across the load range.'
   );
-  const [t03DeltaL, setT03DeltaL] = useState<number>(
-    0.5 * (instrument.verification_interval_e || 1)
-  );
-  const [t03Remarks, setT03Remarks] = useState<string>('Errors of indication evaluated across load range.');
+
+  const addT03Point = () => {
+    setT03Points((prev) => [
+      ...prev,
+      {
+        key: `p${Date.now()}`,
+        label: `Point ${prev.length + 1}`,
+        load: null,
+        observed: null,
+        deltaL: 0.5 * (instrument.verification_interval_e || 1),
+        direction: 'UP',
+      },
+    ]);
+  };
+
+  const removeT03Point = (key: string) => {
+    setT03Points((prev) => (prev.length <= 1 ? prev : prev.filter((p) => p.key !== key)));
+  };
+
+  const updateT03Point = (key: string, patch: Partial<T03PointRow>) => {
+    setT03Points((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  };
 
   // T04 Repeatability State
   const [t04Load, setT04Load] = useState<number>(
@@ -218,11 +311,15 @@ export default function InspectionForm({
       zeroConfig,
       t02Remarks
     );
-    const resT03 = calculateT03(
+    const resT03 = calculateT03MultiPoint(
       t03Method,
-      t03Load,
-      t03Observed,
-      t03DeltaL,
+      t03Points.map((p) => ({
+        load: p.load,
+        observed: p.observed,
+        deltaL: p.deltaL,
+        label: p.label,
+        direction: p.direction,
+      })),
       selectedRuleSetId,
       engineInput,
       mpeRules,
@@ -290,9 +387,7 @@ export default function InspectionForm({
     t02DeltaL,
     t02Remarks,
     t03Method,
-    t03Load,
-    t03Observed,
-    t03DeltaL,
+    t03Points,
     t03Remarks,
     t04Load,
     t04Readings,
@@ -337,8 +432,10 @@ export default function InspectionForm({
     if (!d || d <= 0) return [];
 
     const suspect: { testCode: string; value: number }[] = [];
-    if (!isDisplayable(t03Observed, d)) {
-      suspect.push({ testCode: 'T03', value: t03Observed });
+    for (const point of t03Points) {
+      if (point.observed !== null && !isDisplayable(point.observed, d)) {
+        suspect.push({ testCode: `T03 ${point.label}`, value: point.observed });
+      }
     }
     for (const reading of t04Readings) {
       if (!isDisplayable(reading, d)) suspect.push({ testCode: 'T04', value: reading });
@@ -347,7 +444,7 @@ export default function InspectionForm({
       if (!isDisplayable(value, d)) suspect.push({ testCode: 'T05', value });
     }
     return suspect;
-  }, [instrument.actual_interval_d, t03Observed, t04Readings, t05Positions]);
+  }, [instrument.actual_interval_d, t03Points, t04Readings, t05Positions]);
 
   // Tests that cannot yet produce a verdict, with the reason the engine gave.
   const unresolvedTests = useMemo(() => {
@@ -460,9 +557,12 @@ export default function InspectionForm({
           obsVal = t02Indication;
           loadVal = t02ZeroLoad;
         } else if (testCode === 'T03') {
-          refVal = t03Load;
-          obsVal = t03Observed;
-          loadVal = t03Load;
+          // Flat columns carry the governing (largest-error) point; the full
+          // series lives in calculation_details.points.
+          const details = calcRes?.auditDetails as { load?: number | null; observed?: number | null } | undefined;
+          refVal = details?.load ?? null;
+          obsVal = details?.observed ?? null;
+          loadVal = details?.load ?? null;
         } else if (testCode === 'T04') {
           refVal = t04Load;
           obsVal = t04Readings[0] ?? null;
@@ -1164,118 +1264,242 @@ export default function InspectionForm({
             </div>
           )}
 
-          {/* T03: Errors of Indication Test */}
+          {/* T03: Errors of Indication Test (multiple load points) */}
           <div className="bg-white dark:bg-zinc-900 p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800 pb-3">
               <div>
                 <span className="font-mono text-xs font-bold text-blue-600">T03</span>
                 <h4 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
                   Errors of Indication Test (Clause 3.5.1; A.4.4-A.4.6)
                 </h4>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Each load point is evaluated against the MPE band that applies to that load.
+                </p>
               </div>
               <span
-                className={`px-2.5 py-0.5 text-xs font-bold rounded-full ${
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-full whitespace-nowrap ${
                   calculatedResults.T03?.result === 'PASS'
                     ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
-                    : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                    : calculatedResults.T03?.result === 'FAIL'
+                    ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                 }`}
               >
                 {calculatedResults.T03?.result || 'PENDING'}
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-              <div className="space-y-1">
-                <label className="block font-medium text-zinc-600 dark:text-zinc-400">
-                  Evaluation Method
-                </label>
-                <select
-                  value={t03Method}
-                  onChange={(e) =>
-                    setT03Method(e.target.value as 'DIRECT' | 'CHANGEOVER_POINT')
-                  }
-                  className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 font-semibold"
-                >
-                  <option value="CHANGEOVER_POINT">Changeover Point Method (OIML A.4.4.3)</option>
-                  <option value="DIRECT">Direct Observation</option>
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block font-medium text-zinc-600 dark:text-zinc-400">
-                  Test Load (L) ({engineInput.unit})
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={t03Load}
-                  onChange={(e) => setT03Load(Number(e.target.value))}
-                  className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 font-semibold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block font-medium text-zinc-600 dark:text-zinc-400">
-                  Observed Indication (I) ({engineInput.unit})
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={t03Observed}
-                  onChange={(e) => setT03Observed(Number(e.target.value))}
-                  className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 font-semibold"
-                />
-              </div>
-
-              {t03Method === 'CHANGEOVER_POINT' && (
-                <div className="space-y-1">
-                  <label className="block font-medium text-zinc-600 dark:text-zinc-400">
-                    Additional Load (ΔL) ({engineInput.unit})
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={t03DeltaL}
-                    onChange={(e) => setT03DeltaL(Number(e.target.value))}
-                    className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
-                  />
-                </div>
-              )}
+            <div className="space-y-1 max-w-xs">
+              <label
+                htmlFor="t03-method"
+                className="block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+              >
+                Method
+              </label>
+              <select
+                id="t03-method"
+                value={t03Method}
+                onChange={(e) =>
+                  setT03Method(e.target.value as 'DIRECT' | 'CHANGEOVER_POINT')
+                }
+                className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+              >
+                <option value="CHANGEOVER_POINT">Changeover point (P = I + 0.5e - ΔL)</option>
+                <option value="DIRECT">Direct reading (E = I - L)</option>
+              </select>
             </div>
 
-            {/* Calculated Details Card */}
-            <div className="p-3.5 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div>
-                <span className="text-zinc-500 block font-medium">Calculated Error (E):</span>
-                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">
-                  {calculatedResults.T03?.calculatedError !== null
-                    ? `${calculatedResults.T03?.calculatedError} ${engineInput.unit}`
-                    : 'N/A'}
-                </span>
-              </div>
+            {/* Load point series */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <caption className="sr-only">
+                  Errors of indication: load points, observed indications and calculated errors
+                </caption>
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+                    <th scope="col" className="text-left font-medium py-2 pr-2">Load point</th>
+                    <th scope="col" className="text-left font-medium py-2 px-2">Dir.</th>
+                    <th scope="col" className="text-right font-medium py-2 px-2">
+                      Load ({engineInput.unit})
+                    </th>
+                    <th scope="col" className="text-right font-medium py-2 px-2">
+                      Observed (I)
+                    </th>
+                    {t03Method === 'CHANGEOVER_POINT' && (
+                      <th scope="col" className="text-right font-medium py-2 px-2">ΔL</th>
+                    )}
+                    <th scope="col" className="text-right font-medium py-2 px-2">Error</th>
+                    <th scope="col" className="text-right font-medium py-2 px-2">MPE</th>
+                    <th scope="col" className="text-center font-medium py-2 px-2">Result</th>
+                    <th scope="col" className="w-8">
+                      <span className="sr-only">Remove</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {t03Points.map((point, index) => {
+                    const evaluated = (calculatedResults.T03?.auditDetails?.points ||
+                      []) as Array<{
+                      calculated_error?: number | null;
+                      mpe_value?: number | null;
+                      load_in_e?: number | null;
+                      result?: string;
+                    }>;
+                    const detail = evaluated[index];
 
-              <div>
-                <span className="text-zinc-500 block font-medium">Database MPE Limit:</span>
-                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">
-                  {calculatedResults.T03?.mpeValue !== null
-                    ? `+/- ${calculatedResults.T03?.mpeValue} ${engineInput.unit}`
-                    : 'N/A'}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-zinc-500 block font-medium">Rule MPE Clause:</span>
-                <span className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                  {calculatedResults.T03?.auditDetails?.mpe_clause || 'N/A'}
-                </span>
-              </div>
+                    return (
+                      <tr key={point.key}>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            type="text"
+                            aria-label={`Label for load point ${index + 1}`}
+                            value={point.label}
+                            onChange={(e) =>
+                              updateT03Point(point.key, { label: e.target.value })
+                            }
+                            className="w-32 px-2 py-1.5 border rounded text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                          />
+                        </td>
+                        <td className="py-1.5 px-2">
+                          <select
+                            aria-label={`Direction for load point ${index + 1}`}
+                            value={point.direction}
+                            onChange={(e) =>
+                              updateT03Point(point.key, {
+                                direction: e.target.value as 'UP' | 'DOWN',
+                              })
+                            }
+                            className="px-1.5 py-1.5 border rounded text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                          >
+                            <option value="UP">↑</option>
+                            <option value="DOWN">↓</option>
+                          </select>
+                        </td>
+                        <td className="py-1.5 px-2">
+                          <input
+                            type="number"
+                            step="any"
+                            aria-label={`Test load for point ${index + 1}`}
+                            value={point.load ?? ''}
+                            onChange={(e) =>
+                              updateT03Point(point.key, {
+                                load: e.target.value === '' ? null : Number(e.target.value),
+                              })
+                            }
+                            className="w-24 px-2 py-1.5 border rounded text-xs text-right font-mono text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                          />
+                          {typeof detail?.load_in_e === 'number' && (
+                            <div className="text-[10px] text-zinc-400 text-right mt-0.5">
+                              {formatDecimal(detail.load_in_e, 0)}e
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-1.5 px-2">
+                          <input
+                            type="number"
+                            step="any"
+                            aria-label={`Observed indication for point ${index + 1}`}
+                            placeholder="—"
+                            value={point.observed ?? ''}
+                            onChange={(e) =>
+                              updateT03Point(point.key, {
+                                observed: e.target.value === '' ? null : Number(e.target.value),
+                              })
+                            }
+                            className="w-24 px-2 py-1.5 border rounded text-xs text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                          />
+                        </td>
+                        {t03Method === 'CHANGEOVER_POINT' && (
+                          <td className="py-1.5 px-2">
+                            <input
+                              type="number"
+                              step="any"
+                              aria-label={`Additional load for point ${index + 1}`}
+                              value={point.deltaL ?? ''}
+                              onChange={(e) =>
+                                updateT03Point(point.key, {
+                                  deltaL: e.target.value === '' ? null : Number(e.target.value),
+                                })
+                              }
+                              className="w-20 px-2 py-1.5 border rounded text-xs text-right font-mono text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                            />
+                          </td>
+                        )}
+                        <td className="py-1.5 px-2 text-right font-mono">
+                          {detail?.calculated_error !== null &&
+                          detail?.calculated_error !== undefined
+                            ? formatSigned(detail.calculated_error, 4)
+                            : '—'}
+                        </td>
+                        <td className="py-1.5 px-2 text-right font-mono text-zinc-500">
+                          {detail?.mpe_value !== null && detail?.mpe_value !== undefined
+                            ? `±${formatDecimal(detail.mpe_value, 4)}`
+                            : '—'}
+                        </td>
+                        <td className="py-1.5 px-2 text-center">
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
+                              detail?.result === 'PASS'
+                                ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                                : detail?.result === 'FAIL'
+                                ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                            }`}
+                          >
+                            {detail?.result || '—'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeT03Point(point.key)}
+                            disabled={t03Points.length <= 1}
+                            aria-label={`Remove load point ${index + 1}`}
+                            className="px-1.5 py-0.5 text-zinc-400 hover:text-red-600 disabled:opacity-30 disabled:hover:text-zinc-400 transition-colors"
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={addT03Point}
+                className="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-950/60 transition-colors"
+              >
+                + Add load point
+              </button>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 max-w-lg">
+                Starting rows are suggestions you can edit or delete. The set of loads required by
+                OIML R-76 is not asserted here — enter the loads your procedure calls for, and each
+                is judged against its own MPE band.
+              </p>
+            </div>
+
+            {calculatedResults.T03?.result === 'PENDING' && calculatedResults.T03?.reason && (
+              <p
+                role="status"
+                className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-lg px-3 py-2"
+              >
+                {calculatedResults.T03.reason}
+              </p>
+            )}
+
+            <div className="space-y-1 pt-1">
+              <label
+                htmlFor="t03-remarks"
+                className="block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+              >
                 Remarks
               </label>
               <input
+                id="t03-remarks"
                 type="text"
                 value={t03Remarks}
                 onChange={(e) => setT03Remarks(e.target.value)}
