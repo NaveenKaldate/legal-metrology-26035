@@ -58,6 +58,19 @@ JOIN public.mpe_rules b
  AND a.lower_load_e < COALESCE(b.upper_load_e, 'infinity'::numeric)
  AND b.lower_load_e < COALESCE(a.upper_load_e, 'infinity'::numeric);
 
+-- Duplicate TEST ROWS inside a single inspection. Section 2 adds a unique
+-- index on (inspection_id, test_type); saves made before the rollback fix
+-- could have written the same test twice, which would make that index fail.
+SELECT
+  'DUPLICATE INSPECTION TEST ROWS' AS check_name,
+  inspection_id,
+  test_type,
+  COUNT(*) AS copies
+FROM public.inspection_tests
+GROUP BY inspection_id, test_type
+HAVING COUNT(*) > 1
+ORDER BY inspection_id;
+
 -- If the FIRST query returns rows, duplicates exist. Removing them deletes
 -- data, so it is NOT done automatically. The statement below is deliberately
 -- left commented out - review the duplicates, then run it only if you approve.
@@ -71,6 +84,16 @@ JOIN public.mpe_rules b
 --   AND m.lower_load_e   = keep.lower_load_e
 --   AND m.upper_load_e IS NOT DISTINCT FROM keep.upper_load_e
 --   AND m.ctid > keep.ctid;
+--
+-- Likewise, if the DUPLICATE INSPECTION TEST ROWS query returns rows, review
+-- them first. This keeps the earliest row per (inspection, test) and removes
+-- later copies. Run only if you approve:
+--
+-- DELETE FROM public.inspection_tests t
+-- USING public.inspection_tests keep
+-- WHERE t.inspection_id = keep.inspection_id
+--   AND t.test_type     = keep.test_type
+--   AND t.ctid > keep.ctid;
 
 
 -- -----------------------------------------------------------------------------
