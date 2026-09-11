@@ -19,6 +19,7 @@ export type PendingReasonCode =
   | 'INVALID_E'
   | 'MISSING_TEST_LOAD'
   | 'MISSING_OBSERVED_VALUE'
+  | 'MISSING_DELTA_L'
   | 'NO_RULES_FOR_STAGE'
   | 'NO_APPLICABLE_RULE'
   | 'AMBIGUOUS_RULES'

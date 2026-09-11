@@ -195,6 +195,20 @@ export function calculateT02(
     );
   }
 
+  // delta_L is a MEASURED quantity - the additional load added until the
+  // indication changes. Falling back to a direct reading here would record a
+  // direct result while claiming the changeover method was used.
+  if (method === 'CHANGEOVER' && !isNumeric(deltaL)) {
+    return pending(
+      'T02',
+      method,
+      'Additional load ΔL is required for the changeover-point method. Enter the extra load added until the indication changed, or switch this test to the direct method.',
+      'MISSING_DELTA_L',
+      { indication, delta_l: deltaL, verification_interval_e: e },
+      remarks
+    );
+  }
+
   const eD = D(e);
   const indicationD = D(indication);
   const referenceZero = isNumeric(zeroLoad) ? D(zeroLoad) : D(0);
@@ -202,7 +216,7 @@ export function calculateT02(
   let calculatedIndication: Decimal;
   let error: Decimal;
 
-  if (method === 'CHANGEOVER' && isNumeric(deltaL)) {
+  if (method === 'CHANGEOVER') {
     // P_0 = I_0 + 0.5e - delta_L ; E_0 = P_0 - L_0
     calculatedIndication = indicationD.plus(eD.times(CHANGEOVER_HALF)).minus(D(deltaL));
     error = calculatedIndication.minus(referenceZero);
@@ -306,6 +320,20 @@ export function calculateT03(
     );
   }
 
+  // delta_L is a MEASURED quantity - the additional load added until the
+  // indication steps to the next interval. Silently falling back to a direct
+  // reading would store a direct result under the changeover method's name.
+  if (method === 'CHANGEOVER_POINT' && !isNumeric(deltaL)) {
+    return pending(
+      'T03',
+      method,
+      'Additional load ΔL is required for the changeover-point method. Enter the extra load added until the indication changed, or switch this test to the direct method.',
+      'MISSING_DELTA_L',
+      { load, observed, delta_l: deltaL },
+      remarks
+    );
+  }
+
   const loadD = D(load);
   const rangeProblem = checkLoadRange(loadD, instrument);
   if (rangeProblem) {
@@ -340,7 +368,7 @@ export function calculateT03(
   let calculatedIndication: Decimal;
   let error: Decimal;
 
-  if (method === 'CHANGEOVER_POINT' && isNumeric(deltaL)) {
+  if (method === 'CHANGEOVER_POINT') {
     // R-76 changeover point method, error before rounding:
     // P = I + 0.5e - delta_L ; E = P - L
     calculatedIndication = observedD.plus(eD.times(CHANGEOVER_HALF)).minus(D(deltaL));

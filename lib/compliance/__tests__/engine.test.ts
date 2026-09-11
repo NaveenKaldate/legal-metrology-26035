@@ -478,3 +478,62 @@ test('displayable: exact decimal, no float drift', () => {
   assert.equal(isDisplayable(0.3, 0.1), true);
   assert.equal(isDisplayable(29.99, 0.01), true);
 });
+
+// ===========================================================================
+// Changeover method requires a MEASURED delta_L
+// A default delta_L of 0.5e makes the correction cancel (P = I + 0.5e - 0.5e = I),
+// which would silently record a direct reading under the changeover name.
+// ===========================================================================
+
+test('T03 changeover: missing delta_L is PENDING, not a silent direct reading', () => {
+  const res = calculateT03('CHANGEOVER_POINT', 5, 5.004, null, RS, CLASS_III, MPE_RULES, 'INITIAL');
+  assert.equal(res.result, 'PENDING');
+  assert.equal(res.reasonCode, 'MISSING_DELTA_L');
+  assert.match(res.reason!, /ΔL is required/);
+});
+
+test('T03 direct method still works with no delta_L', () => {
+  const res = calculateT03('DIRECT', 5, 5.004, null, RS, CLASS_III, MPE_RULES, 'INITIAL');
+  assert.equal(res.result, 'PASS');
+  assert.equal(res.calculatedError, 0.004);
+});
+
+test('T03 changeover: a measured delta_L that is NOT 0.5e changes the result', () => {
+  // e = 0.01, so 0.5e = 0.005. delta_L = 0.002 -> P = I + 0.005 - 0.002 = I + 0.003
+  const res = calculateT03('CHANGEOVER_POINT', 5, 5.002, 0.002, RS, CLASS_III, MPE_RULES, 'INITIAL');
+  assert.equal(res.auditDetails.calculated_indication, 5.005);
+  assert.equal(res.calculatedError, 0.005);
+  assert.equal(res.result, 'PASS');
+});
+
+test('T03 changeover: delta_L of exactly 0.5e is a no-op, and that is now explicit', () => {
+  // Documents the cancellation rather than hiding it: the inspector must have
+  // actually measured 0.5e for this to be recorded.
+  const res = calculateT03('CHANGEOVER_POINT', 5, 5.004, 0.005, RS, CLASS_III, MPE_RULES, 'INITIAL');
+  assert.equal(res.calculatedError, 0.004, 'cancels to the direct reading');
+  assert.equal(res.result, 'PASS');
+});
+
+test('T02 changeover: missing delta_L is PENDING', () => {
+  const res = calculateT02('CHANGEOVER', 0, 0, null, 0.01, 'NON_AUTOMATIC');
+  assert.equal(res.result, 'PENDING');
+  assert.equal(res.reasonCode, 'MISSING_DELTA_L');
+});
+
+test('T02 direct method still works with no delta_L', () => {
+  const res = calculateT02('DIRECT', 0, 0.002, null, 0.01, 'NON_AUTOMATIC');
+  assert.equal(res.result, 'PASS');
+});
+
+test('T03 multi-point: changeover without delta_L leaves the series PENDING', () => {
+  const res = calculateT03MultiPoint(
+    'CHANGEOVER_POINT',
+    [{ load: 5, observed: 5.004, label: 'Point A' }],
+    RS,
+    CLASS_III,
+    MPE_RULES,
+    'INITIAL'
+  );
+  assert.equal(res.result, 'PENDING');
+  assert.equal(res.reasonCode, 'MISSING_DELTA_L');
+});

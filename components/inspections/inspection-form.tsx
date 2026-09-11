@@ -44,7 +44,6 @@ function buildSuggestedLoadPoints(instrument: Instrument): T03PointRow[] {
   const e = instrument.verification_interval_e || 0;
   const max = instrument.max_capacity ?? 0;
   const min = instrument.min_capacity ?? 0;
-  const halfDeltaL = e ? 0.5 * e : null;
 
   const round = (value: number) => Number(value.toFixed(6));
   const candidates: { label: string; load: number }[] = [];
@@ -77,10 +76,13 @@ function buildSuggestedLoadPoints(instrument: Instrument): T03PointRow[] {
     key: `p${index}`,
     label: c.label,
     load: c.load ?? null,
-    // Observed is intentionally left blank - the inspector must enter what the
-    // instrument actually showed. Pre-filling it would fabricate a reading.
+    // Observed and delta_L are intentionally left blank. Both are MEASURED
+    // quantities; pre-filling either would fabricate a measurement. In
+    // particular a default delta_L of 0.5e makes the changeover correction
+    // cancel out (P = I + 0.5e - 0.5e = I), silently turning the test into a
+    // direct reading while still labelling it "changeover point".
     observed: null,
-    deltaL: halfDeltaL,
+    deltaL: null,
     direction: 'UP' as const,
   }));
 }
@@ -160,7 +162,9 @@ export default function InspectionForm({
   const [zeroConfig, setZeroConfig] = useState<'NON_AUTOMATIC' | 'SEMI_AUTOMATIC' | 'AUTOMATIC' | 'ZERO_TRACKING'>('NON_AUTOMATIC');
   const t02ZeroLoad = 0;
   const [t02Indication, setT02Indication] = useState<number>(0);
-  const [t02DeltaL, setT02DeltaL] = useState<number>(0.5 * (instrument.verification_interval_e || 1));
+  // Left blank on purpose: delta_L is measured, not assumed. See the comment
+  // in buildSuggestedLoadPoints.
+  const [t02DeltaL, setT02DeltaL] = useState<number | null>(null);
   const [t02Remarks, setT02Remarks] = useState<string>('Zero setting error evaluated.');
 
   // T03 Errors of Indication State - multiple load points.
@@ -189,7 +193,7 @@ export default function InspectionForm({
         label: `Point ${prev.length + 1}`,
         load: null,
         observed: null,
-        deltaL: 0.5 * (instrument.verification_interval_e || 1),
+        deltaL: null,
         direction: 'UP',
       },
     ]);
@@ -1195,14 +1199,21 @@ export default function InspectionForm({
 
               {t02Method === 'CHANGEOVER' && (
                 <div className="space-y-1">
-                  <label className="block font-medium text-zinc-600 dark:text-zinc-400">
-                    Changeover Load (ΔL)
+                  <label
+                    htmlFor="t02-delta-l"
+                    className="block font-medium text-zinc-600 dark:text-zinc-400"
+                  >
+                    Additional Load ΔL ({engineInput.unit})
                   </label>
                   <input
+                    id="t02-delta-l"
                     type="number"
                     step="any"
-                    value={t02DeltaL}
-                    onChange={(e) => setT02DeltaL(Number(e.target.value))}
+                    placeholder="measured"
+                    value={t02DeltaL ?? ''}
+                    onChange={(e) =>
+                      setT02DeltaL(e.target.value === '' ? null : Number(e.target.value))
+                    }
                     className="w-full px-3 py-2 border rounded-lg text-xs text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
                   />
                 </div>
