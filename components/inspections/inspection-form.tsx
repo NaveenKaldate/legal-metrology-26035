@@ -293,6 +293,31 @@ export default function InspectionForm({
     };
   }, [selectedRuleSetId]);
 
+  // Which control stages can this rule set actually evaluate for THIS
+  // instrument's accuracy class?
+  //
+  // A stage offered in the dropdown but with no MPE rows behind it produces
+  // PENDING for every metrological test, which looks like a broken engine
+  // rather than missing configuration. Derived from the loaded rule data, so
+  // seeding the missing rows later re-enables the stage automatically - no
+  // regulatory value is assumed here.
+  const availableStages = useMemo(() => {
+    if (!loadedRuleSet) return null; // still loading - do not disable anything
+
+    const accuracyClass = engineInput.accuracy_class;
+    const stages = new Set<string>();
+
+    for (const rule of loadedRuleSet.mpeRules) {
+      if (!accuracyClass || rule.accuracy_class === accuracyClass) {
+        stages.add(rule.control_stage);
+      }
+    }
+    return stages;
+  }, [loadedRuleSet, engineInput.accuracy_class]);
+
+  const isStageAvailable = (stage: InspectionType) =>
+    availableStages === null || availableStages.has(stage);
+
   // Generate Test Plan
   const testPlan: InspectionPlan | null = useMemo(() => {
     if (!loadedRuleSet) return null;
@@ -757,17 +782,58 @@ export default function InspectionForm({
                 Control Stage / Inspection Type <span className="text-red-500">*</span>
               </label>
               <select
+                id="control-stage"
                 value={controlStage}
                 onChange={(e) => setControlStage(e.target.value as InspectionType)}
+                aria-describedby="control-stage-note"
                 className="w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-sm"
               >
-                <option value="INITIAL">INITIAL (Initial Verification)</option>
-                <option value="IN_SERVICE">IN_SERVICE (In-Service Inspection / Reverification)</option>
-                <option value="TYPE_EVALUATION">TYPE_EVALUATION (Pattern Approval / Type Evaluation)</option>
+                {(
+                  [
+                    { value: 'INITIAL', label: 'INITIAL (Initial Verification)' },
+                    {
+                      value: 'IN_SERVICE',
+                      label: 'IN_SERVICE (In-Service Inspection / Reverification)',
+                    },
+                    {
+                      value: 'TYPE_EVALUATION',
+                      label: 'TYPE_EVALUATION (Pattern Approval / Type Evaluation)',
+                    },
+                  ] as { value: InspectionType; label: string }[]
+                ).map((option) => {
+                  const available = isStageAvailable(option.value);
+                  return (
+                    <option
+                      key={option.value}
+                      value={option.value}
+                      disabled={!available}
+                    >
+                      {option.label}
+                      {available ? '' : ' — not configured in this rule set'}
+                    </option>
+                  );
+                })}
               </select>
-              <span className="text-[11px] text-zinc-500 block">
-                Note: In-Service inspection applies double MPE tolerance under Clause 3.5.2 / Table 1.
-              </span>
+
+              {availableStages !== null && !isStageAvailable(controlStage) ? (
+                <p
+                  role="alert"
+                  className="text-[11px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-900/60 rounded-lg px-3 py-2 mt-1"
+                >
+                  <strong>
+                    {controlStage.replace(/_/g, ' ')} has no MPE rules for{' '}
+                    {engineInput.accuracy_class} in {activeRuleSetObj?.standard || 'this rule set'}.
+                  </strong>{' '}
+                  Every metrological test will stay PENDING until an administrator adds them. No MPE
+                  values are assumed for an unconfigured stage. Choose a configured stage to
+                  continue.
+                </p>
+              ) : (
+                <span id="control-stage-note" className="text-[11px] text-zinc-500 block">
+                  In-service inspection applies a wider MPE than initial verification, as configured
+                  in the selected rule set.
+                </span>
+              )}
             </div>
 
             <div className="space-y-1">
