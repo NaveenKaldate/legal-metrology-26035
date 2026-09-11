@@ -88,6 +88,16 @@ export function getApplicableMPE(
     return lowerMatch && upperMatch;
   });
 
+  console.log("[RULE DEBUG]");
+  console.log("ruleSetId:", ruleSetId);
+  console.log("accuracyClass:", accuracyClass);
+  console.log("controlStage:", stage);
+  console.log("testLoad:", testLoad);
+  console.log("e:", verificationIntervalE);
+  console.log("numberOfIntervals:", numberOfIntervals);
+  console.log("mpeRules fetched:", mpeRules?.length);
+  console.log("matchedMpeRule:", matchingRule || null);
+
   if (!matchingRule) {
     return {
       mpeRule: null,

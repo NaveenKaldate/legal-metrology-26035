@@ -103,7 +103,7 @@ export default function InspectionList({
       {/* Workflow Disclaimer Notice */}
       <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl text-blue-800 dark:text-blue-300 text-xs flex items-center justify-between">
         <span>
-          ℹ️ <strong>Rule Framework Notice:</strong> Deterministic compliance evaluation for OIML R-76 &amp; Indian Legal Metrology Rules.
+         <strong>Rule Framework Notice:</strong> Deterministic compliance evaluation for OIML R-76 &amp; Indian Legal Metrology Rules.
         </span>
       </div>
 

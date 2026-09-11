@@ -11,6 +11,9 @@ export const metadata = {
   description: 'Launch an OIML R-76 & Legal Metrology inspection workflow for a weighing instrument',
 };
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 interface NewInspectionPageProps {
   searchParams: Promise<{ instrumentId?: string }>;
 }
@@ -24,6 +27,8 @@ export default async function NewInspectionPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  console.log("[RULE SET AUTH USER]", user?.id);
 
   if (!user) {
     redirect('/login');
@@ -108,33 +113,10 @@ export default async function NewInspectionPage({
     console.log('[DEBUG] ALL RULE SETS IN DB:', dbRuleSets);
     console.log('[DEBUG] DB ERROR:', error);
     ruleSets = await fetchActiveRuleSets(supabase);
+    console.log("[RULE SET DEBUG] Loaded rule sets:", ruleSets);
   } catch (err) {
     console.error('Error fetching rule sets:', err);
-  }
-
-  // Fallback Rule Sets if DB table not yet seeded
-  if (ruleSets.length === 0) {
-    console.log('--- FALLING BACK TO STATIC RULE SETS ---');
-    ruleSets = [
-      {
-        id: '11111111-1111-1111-1111-111111111111',
-        standard: 'Legal Metrology General Rules',
-        version: '2011',
-        jurisdiction: 'INDIA',
-        status: 'ACTIVE',
-        description: 'Indian Legal Metrology (General) Rules 2011 for NAWI',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: '22222222-2222-2222-2222-222222222222',
-        standard: 'OIML R-76',
-        version: '2006',
-        jurisdiction: 'INTERNATIONAL',
-        status: 'ACTIVE',
-        description: 'OIML R-76:2006 Non-Automatic Weighing Instruments International Standard',
-        created_at: new Date().toISOString(),
-      },
-    ];
+    console.log("[RULE SET DEBUG] Rule set error:", err);
   }
 
   return (

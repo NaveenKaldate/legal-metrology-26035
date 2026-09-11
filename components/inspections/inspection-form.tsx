@@ -34,12 +34,34 @@ export default function InspectionForm({
   const [currentStep, setCurrentStep] = useState<number>(1);
 
   // Selected Rule Set & Stage
-  const [selectedRuleSet, setSelectedRuleSet] = useState<{ id: string; standard: string; version: string } | null>(
-    ruleSets.length > 0 ? { id: ruleSets[0].id, standard: ruleSets[0].standard, version: ruleSets[0].version } : null
+  const [selectedRuleSet, setSelectedRuleSet] = useState<{
+  id: string;
+  standard: string;
+  version: string;
+} | null>(() => {
+  const oimlRuleSet = ruleSets.find(
+    (rs) =>
+      rs.standard === 'OIML R-76' &&
+      rs.version === '2006'
   );
+
+  const defaultRuleSet = oimlRuleSet || ruleSets[0];
+
+  return defaultRuleSet
+    ? {
+        id: defaultRuleSet.id,
+        standard: defaultRuleSet.standard,
+        version: defaultRuleSet.version
+      }
+    : null;
+});
   
   // Backward compatibility getter
   const selectedRuleSetId = selectedRuleSet?.id || '';
+
+  useEffect(() => {
+    console.log("[RULE SET DEBUG] Selected rule set:", selectedRuleSetId);
+  }, [selectedRuleSetId]);
 
   const [controlStage, setControlStage] = useState<InspectionType>('INITIAL');
   const [dataSource, setDataSource] = useState<InspectionDataSource>('SIMULATED');
@@ -321,6 +343,11 @@ export default function InspectionForm({
         return;
       }
 
+      console.log('[RULE SET DEBUG] Selected:', {
+        selectedRuleSetId,
+        selectedRuleSet
+      });
+
       // Verify the UUID is not empty
       if (!selectedRuleSet || typeof selectedRuleSetId !== 'string') {
         throw new Error('Invalid OIML rule set ID.');
@@ -353,6 +380,17 @@ export default function InspectionForm({
         return;
       }
 
+      console.log('[RULE SET DEBUG] Verified:', {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        id: (verifyRuleSet as any)?.id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        standard: (verifyRuleSet as any)?.standard,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        version: (verifyRuleSet as any)?.version,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        jurisdiction: (verifyRuleSet as any)?.jurisdiction
+      });
+
       // 1. Insert into public.inspections
       const { data: inspectionData, error: inspectionError } = await (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -361,7 +399,8 @@ export default function InspectionForm({
         .insert({
           instrument_id: instrument.id,
           inspector_id: user.id,
-          rule_set_id: selectedRuleSet.id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rule_set_id: (verifyRuleSet as any).id,
           inspection_type: controlStage,
           inspection_date: new Date(inspectionDate).toISOString(),
           rule_version: loadedRuleSet.ruleSet.version,
@@ -534,11 +573,15 @@ export default function InspectionForm({
                 }}
                 className="w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-sm font-semibold"
               >
-                {ruleSets.map((rs) => (
-                  <option key={rs.id} value={rs.id}>
-                    {rs.standard} ({rs.version}) — {rs.jurisdiction} ({rs.description})
-                  </option>
-                ))}
+                {ruleSets.length === 0 ? (
+                  <option value="" disabled>No active rule frameworks found</option>
+                ) : (
+                  ruleSets.map((rs) => (
+                    <option key={rs.id} value={rs.id}>
+                      {rs.standard} ({rs.version}) — {rs.jurisdiction} ({rs.description})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -774,50 +817,67 @@ export default function InspectionForm({
             </div>
           ) : testPlan ? (
             <div className="space-y-4">
-              <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border rounded-xl overflow-hidden text-xs">
-                {testPlan.testItems.map((item) => (
-                  <div
-                    key={item.testDefinition.id}
-                    className="p-4 bg-zinc-50/50 dark:bg-zinc-800/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
-                          {item.testDefinition.test_code}
-                        </span>
-                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                          {item.testDefinition.name}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-[10px] font-mono">
-                          Clause {item.testDefinition.clause}
+              {testPlan.testItems.length === 0 ? (
+                <div className="p-8 bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700/60 rounded-xl text-center space-y-3">
+                  <div className="text-3xl">⚠️</div>
+                  <h4 className="font-bold text-zinc-900 dark:text-zinc-100">
+                    No test definitions are currently configured for this rule framework.
+                  </h4>
+                  <div className="inline-flex flex-col text-sm text-zinc-600 dark:text-zinc-400 bg-white dark:bg-zinc-900 px-4 py-2 border border-zinc-200 dark:border-zinc-800 rounded-lg text-left">
+                    <span><strong>Standard:</strong> {activeRuleSetObj?.standard || 'N/A'}</span>
+                    <span><strong>Version:</strong> {activeRuleSetObj?.version || 'N/A'}</span>
+                    <span><strong>Jurisdiction:</strong> {activeRuleSetObj?.jurisdiction || 'N/A'}</span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-2">
+                    Please return to Step 1 and select a fully populated framework (e.g., OIML R-76).
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border rounded-xl overflow-hidden text-xs">
+                  {testPlan.testItems.map((item) => (
+                    <div
+                      key={item.testDefinition.id}
+                      className="p-4 bg-zinc-50/50 dark:bg-zinc-800/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                            {item.testDefinition.test_code}
+                          </span>
+                          <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                            {item.testDefinition.name}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-[10px] font-mono">
+                            Clause {item.testDefinition.clause}
+                          </span>
+                        </div>
+                        <p className="text-zinc-500 dark:text-zinc-400 mt-1">
+                          {item.testDefinition.description}
+                        </p>
+                        <span className="text-[11px] text-zinc-600 dark:text-zinc-400 block mt-1">
+                          Reason: {item.reason}
                         </span>
                       </div>
-                      <p className="text-zinc-500 dark:text-zinc-400 mt-1">
-                        {item.testDefinition.description}
-                      </p>
-                      <span className="text-[11px] text-zinc-600 dark:text-zinc-400 block mt-1">
-                        Reason: {item.reason}
-                      </span>
+  
+                      <div>
+                        <span
+                          className={`px-3 py-1 font-bold rounded-full text-xs ${
+                            item.applicability === 'REQUIRED'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                              : item.applicability === 'CONDITIONAL'
+                              ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                              : item.applicability === 'OPTIONAL'
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                          }`}
+                        >
+                          {item.applicability}
+                        </span>
+                      </div>
                     </div>
-
-                    <div>
-                      <span
-                        className={`px-3 py-1 font-bold rounded-full text-xs ${
-                          item.applicability === 'REQUIRED'
-                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                            : item.applicability === 'CONDITIONAL'
-                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
-                            : item.applicability === 'OPTIONAL'
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
-                        }`}
-                      >
-                        {item.applicability}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center text-zinc-500 text-sm">

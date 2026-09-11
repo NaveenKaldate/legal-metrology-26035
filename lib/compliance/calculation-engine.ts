@@ -196,6 +196,14 @@ export function calculateT03(
     mpeRules
   );
 
+  console.log("[T03 DEBUG]", {
+    load,
+    observed,
+    deltaL,
+    e,
+    mpeEvalResult: mpeEval,
+  });
+
   if (mpeEval.status === 'PENDING' || mpeEval.mpeValue === null) {
     return {
       testCode: 'T03',
@@ -300,6 +308,13 @@ export function calculateT04(
     mpeRules
   );
 
+  console.log("[T04 DEBUG]", {
+    load,
+    readings,
+    e,
+    mpeEvalResult: mpeEval,
+  });
+
   if (mpeEval.status === 'PENDING' || mpeEval.mpeValue === null) {
     return {
       testCode: 'T04',
@@ -390,6 +405,13 @@ export function calculateT05(
     e,
     mpeRules
   );
+
+  console.log("[T05 DEBUG]", {
+    load,
+    positions,
+    e,
+    mpeEvalResult: mpeEval,
+  });
 
   if (mpeEval.status === 'PENDING' || mpeEval.mpeValue === null) {
     return {
