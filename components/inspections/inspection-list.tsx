@@ -37,6 +37,47 @@ export default function InspectionList({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string>('ALL');
   const [selectedResult, setSelectedResult] = useState<string>('ALL');
+  const [selectedInstrument, setSelectedInstrument] = useState<string>('ALL');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+
+  // Instruments that actually appear in the history, for the filter dropdown.
+  const instrumentOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const item of initialInspections) {
+      if (!item.instrument_id) continue;
+      const label = [
+        item.instrument?.manufacturer,
+        item.instrument?.model,
+        item.instrument?.serial_number ? `(${item.instrument.serial_number})` : null,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      if (!seen.has(item.instrument_id)) {
+        seen.set(item.instrument_id, label || 'Unknown instrument');
+      }
+    }
+    return Array.from(seen.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [initialInspections]);
+
+  const hasActiveFilters =
+    searchQuery.trim() !== '' ||
+    selectedType !== 'ALL' ||
+    selectedResult !== 'ALL' ||
+    selectedInstrument !== 'ALL' ||
+    dateFrom !== '' ||
+    dateTo !== '';
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setSelectedType('ALL');
+    setSelectedResult('ALL');
+    setSelectedInstrument('ALL');
+    setDateFrom('');
+    setDateTo('');
+  };
 
   const filteredInspections = useMemo(() => {
     return initialInspections.filter((item) => {
@@ -48,6 +89,26 @@ export default function InspectionList({
       // Result Filter
       if (selectedResult !== 'ALL' && item.overall_result !== selectedResult) {
         return false;
+      }
+
+      // Instrument Filter
+      if (selectedInstrument !== 'ALL' && item.instrument_id !== selectedInstrument) {
+        return false;
+      }
+
+      // Date Range Filter (inclusive of both endpoints, local dates)
+      if (dateFrom || dateTo) {
+        const inspectedAt = new Date(item.inspection_date);
+        if (Number.isNaN(inspectedAt.getTime())) return false;
+
+        if (dateFrom) {
+          const from = new Date(`${dateFrom}T00:00:00`);
+          if (inspectedAt < from) return false;
+        }
+        if (dateTo) {
+          const to = new Date(`${dateTo}T23:59:59.999`);
+          if (inspectedAt > to) return false;
+        }
       }
 
       // Search Filter
@@ -72,7 +133,15 @@ export default function InspectionList({
 
       return true;
     });
-  }, [initialInspections, searchQuery, selectedType, selectedResult]);
+  }, [
+    initialInspections,
+    searchQuery,
+    selectedType,
+    selectedResult,
+    selectedInstrument,
+    dateFrom,
+    dateTo,
+  ]);
 
   const getResultBadge = (result: string) => {
     switch (result) {
@@ -108,51 +177,147 @@ export default function InspectionList({
       </div>
 
       {/* Header Actions & Filters */}
-      <div className="bg-white dark:bg-zinc-900 p-4 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        {/* Search Input */}
-        <div className="relative flex-1">
-          <input
-            type="text"
-            placeholder="Search serial number, manufacturer, model, rule set, or ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
-          />
-          <span className="absolute left-3 top-2.5 text-zinc-400 text-sm">
-            🔍
-          </span>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={selectedType}
-            onChange={(e) => setSelectedType(e.target.value)}
-            className="px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
-          >
-            <option value="ALL">All Control Stages</option>
-            <option value="INITIAL">INITIAL</option>
-            <option value="IN_SERVICE">IN_SERVICE</option>
-            <option value="TYPE_EVALUATION">TYPE_EVALUATION</option>
-          </select>
-
-          <select
-            value={selectedResult}
-            onChange={(e) => setSelectedResult(e.target.value)}
-            className="px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
-          >
-            <option value="ALL">All Results</option>
-            <option value="PASS">PASS</option>
-            <option value="FAIL">FAIL</option>
-            <option value="PENDING">PENDING</option>
-          </select>
+      <div className="bg-white dark:bg-zinc-900 p-4 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 space-y-4">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <label htmlFor="inspection-search" className="sr-only">
+              Search inspections
+            </label>
+            <input
+              id="inspection-search"
+              type="search"
+              placeholder="Search serial number, manufacturer, model, rule set, or inspection ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            />
+            <span aria-hidden="true" className="absolute left-3 top-2.5 text-zinc-400 text-sm">
+              🔍
+            </span>
+          </div>
 
           <Link
             href="/dashboard/instruments"
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap text-center"
           >
             + New Inspection
           </Link>
+        </div>
+
+        {/* Filters */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="space-y-1">
+            <label
+              htmlFor="filter-stage"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              Control stage
+            </label>
+            <select
+              id="filter-stage"
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            >
+              <option value="ALL">All stages</option>
+              <option value="INITIAL">Initial</option>
+              <option value="IN_SERVICE">In service</option>
+              <option value="TYPE_EVALUATION">Type evaluation</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="filter-instrument"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              Instrument
+            </label>
+            <select
+              id="filter-instrument"
+              value={selectedInstrument}
+              onChange={(e) => setSelectedInstrument(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            >
+              <option value="ALL">All instruments</option>
+              {instrumentOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="filter-from"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              From date
+            </label>
+            <input
+              id="filter-from"
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="filter-to"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              To date
+            </label>
+            <input
+              id="filter-to"
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="filter-result"
+              className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide"
+            >
+              Result
+            </label>
+            <select
+              id="filter-result"
+              value={selectedResult}
+              onChange={(e) => setSelectedResult(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            >
+              <option value="ALL">All results</option>
+              <option value="PASS">Pass</option>
+              <option value="FAIL">Fail</option>
+              <option value="PENDING">Pending</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
+            Showing <strong className="text-zinc-700 dark:text-zinc-200">{filteredInspections.length}</strong>{' '}
+            of {initialInspections.length} inspection{initialInspections.length === 1 ? '' : 's'}
+          </p>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+            >
+              Clear all filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -218,12 +383,20 @@ export default function InspectionList({
                     </td>
 
                     <td className="px-6 py-4 text-right whitespace-nowrap">
-                      <Link
-                        href={`/dashboard/inspections/${item.id}`}
-                        className="text-xs font-semibold text-blue-600 hover:text-blue-500 dark:text-blue-400 hover:underline"
-                      >
-                        View Inspection →
-                      </Link>
+                      <div className="flex items-center justify-end gap-3">
+                        <Link
+                          href={`/dashboard/inspections/${item.id}`}
+                          className="text-xs font-semibold text-blue-600 hover:text-blue-500 dark:text-blue-400 hover:underline"
+                        >
+                          View
+                        </Link>
+                        <Link
+                          href={`/dashboard/reports/${item.id}`}
+                          className="text-xs font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:underline"
+                        >
+                          Report / PDF
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -239,18 +412,15 @@ export default function InspectionList({
             No inspection records found
           </h3>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-md mx-auto">
-            {searchQuery || selectedType !== 'ALL' || selectedResult !== 'ALL'
-              ? 'No inspection records match your selected filters. Try clearing search keywords or filters.'
+            {hasActiveFilters
+              ? 'No inspection records match your current search and filters. Try widening the date range or clearing the filters.'
               : 'There are currently no inspection records saved in the system.'}
           </p>
           <div className="pt-2">
-            {searchQuery || selectedType !== 'ALL' || selectedResult !== 'ALL' ? (
+            {hasActiveFilters ? (
               <button
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedType('ALL');
-                  setSelectedResult('ALL');
-                }}
+                type="button"
+                onClick={clearFilters}
                 className="px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
               >
                 Clear Filters

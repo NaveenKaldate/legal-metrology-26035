@@ -93,11 +93,18 @@ async function seedDatabase() {
     { rule_set_id: '11111111-1111-1111-1111-111111111111', accuracy_class: 'Class III', control_stage: 'IN_SERVICE', lower_load_e: 2000, upper_load_e: 10000, mpe_multiplier: 3.0, mpe_unit: 'e', clause: 'Table 1 (In-Service), Rule 3.5.1' },
   ];
 
-  const { data: mpeData, error: mpeErr } = await supabase.from('mpe_rules').insert(mpeRulesToInsert).select();
+  // Upsert (not insert) so re-running the seed cannot duplicate MPE bands.
+  // Requires the unique index from migration 20260911_compliance_hardening.sql.
+  const { data: mpeData, error: mpeErr } = await supabase
+    .from('mpe_rules')
+    .upsert(mpeRulesToInsert, {
+      onConflict: 'rule_set_id,accuracy_class,control_stage,lower_load_e',
+    })
+    .select();
   if (mpeErr) {
     console.error('Error inserting mpe_rules:', mpeErr.message);
   } else {
-    console.log('MPE rules inserted successfully:', mpeData?.length);
+    console.log('MPE rules upserted successfully:', mpeData?.length);
   }
 
   console.log('Seeding complete!');

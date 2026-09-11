@@ -24,3 +24,52 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ---------------------------------------------------------------------------
+   Print styles for the NAWI test report
+   --------------------------------------------------------------------------- */
+@media print {
+  /* A4 with sensible margins. NOTE: page numbers are intentionally NOT drawn
+     here - CSS @page margin boxes (@bottom-right { content: counter(page) })
+     are not supported by Chrome, so any "Page 1 of N" we rendered would be
+     wrong. Use the browser print dialog's own "Headers and footers" option,
+     which prints accurate page numbers. */
+  @page {
+    size: A4;
+    margin: 14mm 12mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* Hide interactive chrome that has no meaning on paper. */
+  .print\:hidden,
+  nav,
+  header.app-header {
+    display: none !important;
+  }
+
+  .report-document {
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Keep related blocks together across page breaks. */
+  section,
+  tr,
+  .print\:break-inside-avoid {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group; /* repeat table headings on each page */
+  }
+
+  /* Ensure result colours survive the printer's default colour stripping. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

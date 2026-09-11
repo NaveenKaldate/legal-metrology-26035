@@ -37,14 +37,8 @@ export async function fetchActiveRuleSets(
     )
     .order("standard", { ascending: true });
 
-  console.log("========== RULE SET DIAGNOSTIC ==========");
-  console.log("RULE SET DATA:", data);
-  console.log("RULE SET ERROR:", error);
-  console.log("RULE SET COUNT:", data?.length);
-  console.log("==========================================");
-
   if (error) {
-    console.error("[RULE SET LOAD ERROR]", error);
+    console.error('[rule-engine] Failed to load rule sets:', error.message);
     return [];
   }
 
@@ -110,10 +104,14 @@ export async function fetchLoadedRuleSet(
   }
 
   // 4. Fetch MPE Rules
+  // Ordered so the engine receives a stable, reproducible rule sequence.
   const { data: mpeData, error: mpeErr } = await supabase
     .from("mpe_rules")
     .select("*")
-    .eq("rule_set_id", ruleSetId);
+    .eq("rule_set_id", ruleSetId)
+    .order("accuracy_class", { ascending: true })
+    .order("control_stage", { ascending: true })
+    .order("lower_load_e", { ascending: true });
 
   if (mpeErr) {
     throw new Error(
@@ -122,13 +120,6 @@ export async function fetchLoadedRuleSet(
   }
 
   const mpeRules = (mpeData || []) as MpeRule[];
-
-  console.log("[MPE FETCH DEBUG]", {
-    requestedRuleSetId: ruleSetId,
-    mpeDataLength: mpeData?.length,
-    mpeErr,
-    mpeData,
-  });
 
   // 5. Fetch Calculation Rules
   const { data: calcData } = await supabase

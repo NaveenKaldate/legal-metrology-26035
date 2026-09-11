@@ -6,6 +6,10 @@ import DashboardHeader from '@/components/dashboard/header';
 
 import StatCards from '@/components/dashboard/stat-cards';
 
+import RecentInspections, {
+  RecentInspectionRow,
+} from '@/components/dashboard/recent-inspections';
+
 import { Profile } from '@/types/database';
 
 export const metadata = {
@@ -46,31 +50,60 @@ export default async function DashboardPage() {
     });
 
   // ---------------------------------------------------------
-  // Fetch all inspections
+  // Instrument type distribution
   // ---------------------------------------------------------
-  const { data: inspections, error: inspectionsError } = await supabase
+  const { data: instrumentRows } = await supabase
+    .from('instruments')
+    .select('instrument_type');
+
+  const typeDistribution = ((instrumentRows || []) as Array<{
+    instrument_type: string;
+  }>).reduce<Record<string, number>>((acc, row) => {
+    acc[row.instrument_type] = (acc[row.instrument_type] || 0) + 1;
+    return acc;
+  }, {});
+
+  // ---------------------------------------------------------
+  // Inspection statistics.
+  // Counts come from `inspections.overall_result` (the OVERALL inspection
+  // result) - never from `inspection_tests.result`, which is per test.
+  // Counted with head-only queries so the whole table is not transferred.
+  // ---------------------------------------------------------
+  const countByResult = async (result: 'PASS' | 'FAIL' | 'PENDING') => {
+    const { count } = await supabase
+      .from('inspections')
+      .select('*', { count: 'exact', head: true })
+      .eq('overall_result', result);
+    return count ?? 0;
+  };
+
+  const [
+    { count: totalInspections, error: inspectionsError },
+    passedCount,
+    failedCount,
+    pendingCount,
+  ] = await Promise.all([
+    supabase.from('inspections').select('*', { count: 'exact', head: true }),
+    countByResult('PASS'),
+    countByResult('FAIL'),
+    countByResult('PENDING'),
+  ]);
+
+  const inspectionsCount = totalInspections ?? 0;
+
+  // ---------------------------------------------------------
+  // Five most recent inspections
+  // ---------------------------------------------------------
+  const { data: rawRecent } = await supabase
     .from('inspections')
-    .select('*');
+    .select(
+      `id, inspection_date, inspection_type, overall_result,
+       instrument:instruments(manufacturer, model, serial_number)`
+    )
+    .order('inspection_date', { ascending: false })
+    .limit(5);
 
-  // ---------------------------------------------------------
-  // Type inspection records
-  // ---------------------------------------------------------
-  const inspectionRecords = (inspections || []) as Array<{
-    overall_result?: 'PASS' | 'FAIL' | 'PENDING' | null;
-  }>;
-
-  // ---------------------------------------------------------
-  // Calculate dashboard statistics
-  // ---------------------------------------------------------
-  const inspectionsCount = inspectionRecords.length;
-
-  const passedCount = inspectionRecords.filter(
-    (inspection) => inspection.overall_result === 'PASS'
-  ).length;
-
-  const failedCount = inspectionRecords.filter(
-    (inspection) => inspection.overall_result === 'FAIL'
-  ).length;
+  const recentInspections = (rawRecent || []) as unknown as RecentInspectionRow[];
 
   // ---------------------------------------------------------
   // Dashboard
@@ -104,6 +137,7 @@ export default async function DashboardPage() {
           inspectionsCount={inspectionsCount}
           passedCount={passedCount}
           failedCount={failedCount}
+          pendingCount={pendingCount}
         />
 
         {/* Inspection Query Error */}
@@ -113,6 +147,53 @@ export default async function DashboardPage() {
             {inspectionsError.message}
           </div>
         )}
+
+        {/* Recent activity & instrument mix */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <RecentInspections rows={recentInspections} />
+          </div>
+
+          <section className="bg-white dark:bg-zinc-900 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 p-6">
+            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+              Instrument types
+            </h3>
+            {Object.keys(typeDistribution).length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                No instruments registered yet.
+              </p>
+            ) : (
+              <ul className="space-y-4">
+                {Object.entries(typeDistribution).map(([type, count]) => {
+                  const total = instrumentsCount || 1;
+                  const percent = Math.round((count / total) * 100);
+                  return (
+                    <li key={type}>
+                      <div className="flex items-baseline justify-between text-sm mb-1.5">
+                        <span className="text-zinc-700 dark:text-zinc-300">
+                          {type.replace(/_/g, ' ')}
+                        </span>
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                          {count}
+                        </span>
+                      </div>
+                      <div
+                        className="h-2 w-full bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden"
+                        role="img"
+                        aria-label={`${type.replace(/_/g, ' ')}: ${count} of ${instrumentsCount} instruments (${percent}%)`}
+                      >
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        </div>
 
         {/* Profile Details Card */}
         <div className="bg-white dark:bg-zinc-900 p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-800 space-y-4">

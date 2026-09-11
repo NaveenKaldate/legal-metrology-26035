@@ -60,10 +60,6 @@ export default function InspectionForm({
   // Backward compatibility getter
   const selectedRuleSetId = selectedRuleSet?.id || '';
 
-  useEffect(() => {
-    console.log("[RULE SET DEBUG] Selected rule set:", selectedRuleSetId);
-  }, [selectedRuleSetId]);
-
   const [controlStage, setControlStage] = useState<InspectionType>('INITIAL');
   const [dataSource, setDataSource] = useState<InspectionDataSource>('SIMULATED');
   const [inspectionDate, setInspectionDate] = useState<string>(
@@ -372,11 +368,6 @@ export default function InspectionForm({
         return;
       }
 
-      console.log('[RULE SET DEBUG] Selected:', {
-        selectedRuleSetId,
-        selectedRuleSet
-      });
-
       // Verify the UUID is not empty
       if (!selectedRuleSet || typeof selectedRuleSetId !== 'string') {
         throw new Error('Invalid OIML rule set ID.');
@@ -389,15 +380,13 @@ export default function InspectionForm({
         .maybeSingle();
 
       if (verifyError) {
-        console.error('[RULE SET DEBUG] DB Error verifying rule set:', verifyError);
-        setServerError('Database error while verifying rule set.');
+        setServerError(`Database error while verifying the rule set: ${verifyError.message}`);
         setSubmitting(false);
         return;
       }
 
       if (!verifyRuleSet) {
-        console.error('[RULE SET DEBUG] Rule set not found in DB for ID:', selectedRuleSetId);
-        setServerError('Selected rule set was not found.');
+        setServerError('The selected rule set no longer exists. Return to Step 1 and choose an active rule set.');
         setSubmitting(false);
         return;
       }
@@ -408,17 +397,6 @@ export default function InspectionForm({
         setSubmitting(false);
         return;
       }
-
-      console.log('[RULE SET DEBUG] Verified:', {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        id: (verifyRuleSet as any)?.id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        standard: (verifyRuleSet as any)?.standard,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        version: (verifyRuleSet as any)?.version,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        jurisdiction: (verifyRuleSet as any)?.jurisdiction
-      });
 
       // 1. Insert into public.inspections
       const { data: inspectionData, error: inspectionError } = await (

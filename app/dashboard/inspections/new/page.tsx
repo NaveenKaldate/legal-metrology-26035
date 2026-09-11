@@ -28,8 +28,6 @@ export default async function NewInspectionPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  console.log("[RULE SET AUTH USER]", user?.id);
-
   if (!user) {
     redirect('/login');
   }
@@ -109,14 +107,9 @@ export default async function NewInspectionPage({
   // Fetch Active Rule Sets from Supabase
   let ruleSets: RuleSet[] = [];
   try {
-    const { data: dbRuleSets, error } = await supabase.from('rule_sets').select('*');
-    console.log('[DEBUG] ALL RULE SETS IN DB:', dbRuleSets);
-    console.log('[DEBUG] DB ERROR:', error);
     ruleSets = await fetchActiveRuleSets(supabase);
-    console.log("[RULE SET DEBUG] Loaded rule sets:", ruleSets);
   } catch (err) {
     console.error('Error fetching rule sets:', err);
-    console.log("[RULE SET DEBUG] Rule set error:", err);
   }
 
   return (
